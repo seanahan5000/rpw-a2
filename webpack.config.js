@@ -8,7 +8,7 @@ const path = require('path');
 
 const extConfig = {
     target: 'node',
-    entry: './src/extension.ts',
+    entry: './src/extension/extension.ts',
     output: {
         path: path.resolve(__dirname, 'out'),
         filename: 'extension.js',
@@ -50,7 +50,7 @@ const extConfig = {
 
 const webConfig = {
     target: ["web"],
-    entry: './src/webview/main.ts',
+    entry: './src/extension/webview.ts',
     output: {
         path: path.resolve(__dirname, 'out'),
         filename: 'webview.js'
@@ -65,10 +65,6 @@ const webConfig = {
                 test: /\.ts$/,
                 exclude: /node_modules/,
                 use: [{ loader: 'ts-loader' }]
-            },
-            {
-                test: /\.css$/i,
-                use: [{ loader: 'css-loader' }]
             },
             {
                 test: /\.(png|svg|jpg|jpeg|gif|ttf)$/i,

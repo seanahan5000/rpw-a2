@@ -396,7 +396,7 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
     //   this._context.extensionUri, 'media', 'pawDraw.css'));
 
     const styleMainUri = webview.asWebviewUri(vscode.Uri.joinPath(
-      this._context.extensionUri, 'src', 'webview', 'display_view.css'));
+      this._context.extensionUri, 'src', 'display_view.css'));
 
     // Use a nonce to whitelist which scripts can be run
     const nonce = getNonce();

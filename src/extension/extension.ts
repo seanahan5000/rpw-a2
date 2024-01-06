@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs'
-import { DiskImage, ProdosVolume, FileEntry, ProdosFileEntry } from "./filesys/prodos"
-import { Dos33Volume } from './filesys/dos33'
+import { DiskImage, ProdosVolume, FileEntry, ProdosFileEntry } from "../filesys/prodos"
+import { Dos33Volume } from '../filesys/dos33'
 import { HiresEditorProvider } from "./editor"
 
 class Apple2FileSystem implements vscode.FileSystemProvider {

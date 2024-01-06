@@ -1,5 +1,5 @@
 
-import { DisplayView } from "./display_view"
+import { DisplayView } from "../display_view"
 
 // @ts-ignore
 const vscode = acquireVsCodeApi()
