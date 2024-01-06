@@ -1,0 +1,198 @@
+
+/* TODO: how are these shared? */
+:root {
+  --text-color: lightgray;
+  --mono-font: "Menlo", "Monaco", monospace;
+  --prop-font: "Arial", "Arial", sans-serif;
+}
+
+/*----------------------------------------------------------------------------*
+ *  Screen Display, Tool Palette, and Color Palette
+ *----------------------------------------------------------------------------*/
+
+/* top level display element */
+
+#display-grid {
+  display: grid;
+  grid-auto-columns: 0px 564px;
+  row-gap: 0px;
+  column-gap: 0px;
+}
+
+#display-grid.editing {
+  grid-auto-columns: 50px 564px;
+  column-gap: 4px;
+}
+
+/* display screen with tabs */
+
+.screen-tabs {
+  grid-row: 1;
+  grid-column: 2;
+  font-family: var(--mono-font);
+  font-size: 10pt;
+}
+
+.screen-tabs .tabs-list {
+  list-style: none;
+  padding: 0px;
+  margin: 0px;
+  margin-top: 6px;
+}
+
+.screen-tabs .tabs-list li {
+  width: 100px;
+  float: left;
+  margin: 0px;
+  padding: 0px;
+  padding-top: 4px;
+  padding-bottom: 2px;
+  text-align: center;
+  border: 2px solid #222;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+.screen-tabs .tabs-list li:hover {
+  cursor: pointer;
+  background-color:#222 !important;
+}
+
+.screen-tabs .tabs-list li a {
+  text-decoration: none;
+  color: gray;
+}
+
+.screen-tabs .tabs-list li.active {
+  border-color: #444;
+  background-color:#444 !important;
+}
+
+/* TODO: fix this common class name being used globally */
+.active a {
+  color:lightgray !important;
+}
+
+#screen-edit {
+  font-size: 20px !important;
+  float: top;
+  color: #EF715E;
+  margin-top: 0px;
+  margin-left: 8px;
+  margin-bottom: 0px;
+  padding-top: 2px;
+  padding-left: 4px;
+  padding-bottom: 2px;
+  padding-right: 4px;
+}
+
+.edit-btn:hover {
+  background-color: #333;
+  border-radius: 6px;
+}
+
+.screen-tab {
+  resize: none;
+  overflow: hidden;  /* required to avoid flicker while resizing */
+  width: 560px;
+  height: 384px;
+  min-width: 568px;
+  min-height: 392px;
+}
+
+#hires-canvas {
+  border: 2px solid #444;
+}
+
+#hires-canvas:focus {
+  border-color:#888;
+}
+
+/* tool palette */
+
+#tool-palette {
+  display: none;
+  grid-column: 1;
+  grid-row-start: 1;
+  grid-row-end: 2;
+  margin-top: 32px;
+  margin-bottom: 4px;
+  width: 50px;
+  height: 196px;
+  background-color: #333;
+}
+
+#tool-palette.visible {
+  display: block;
+}
+
+.tool-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px none #000;
+  margin: 4px;
+}
+
+.tool-btn.active {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #0f0;
+}
+
+.tool-img {
+  width: 100%;
+  height: 100%;
+}
+
+#color-xy {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-auto-columns: max-content max-content;
+}
+
+/* color palette */
+
+#color-palette {
+  display: none;
+  grid-column: 1;
+  grid-row: 1;
+  background-color: #444;
+  max-height: 48px;
+  padding: 2px;
+  float: left;
+}
+
+#color-palette.visible {
+  display: block;
+}
+
+.color-btn {
+  width: 32px;
+  height: 32px;
+  float: left;
+  margin: 4px;
+}
+
+.color-btn.active {
+  width: 40px;
+  height: 40px;
+}
+
+#xy-palette {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 142px;
+  font-family: var(--mono-font);
+  font-size: 8pt;
+}
+
+#xy-palette.visible {
+  display: inline;
+  user-select: text;
+  background-color: #444;
+  margin-left: 4px;
+  padding: 4px;
+}
+
+/*----------------------------------------------------------------------------*/

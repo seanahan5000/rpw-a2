@@ -1,7 +1,8 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs'
-import { DiskImage, ProdosVolume, FileEntry, ProdosFileEntry } from "./prodos"
-import { Dos33Volume } from './dos33'
+import { DiskImage, ProdosVolume, FileEntry, ProdosFileEntry } from "./filesys/prodos"
+import { Dos33Volume } from './filesys/dos33'
+import { HiresEditorProvider } from "./editor"
 
 class Apple2FileSystem implements vscode.FileSystemProvider {
 
@@ -252,6 +253,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('do', a2fs, { isReadonly: true, isCaseSensitive: true }))
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('po', a2fs, { isReadonly: true, isCaseSensitive: true }))
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('2mg', a2fs, { isReadonly: true, isCaseSensitive: true }))
+
+  context.subscriptions.push(HiresEditorProvider.register(context));
 
   // *** could this be made to work with multiple volumes at the same time? ***
   context.subscriptions.push(vscode.commands.registerCommand('extension.mountApple2FileSystem', (uri: vscode.Uri) => {

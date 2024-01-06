@@ -4,7 +4,7 @@
 	"description": "File system support for Apple II DOS 3.3 and ProDOS files (.dsk, .do, .po, .2mg)",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"license": "MIT",
 	"engines": {
 		"vscode": "^1.74.0"
@@ -13,71 +13,87 @@
 		"Other"
 	],
 	"activationEvents": [
-        "workspaceContains:**/*.dsk",
-        "onLanguage:dsk",
-        "onFileSystem:dsk",
-        "workspaceContains:**/*.do",
-        "onLanguage:do",
-        "onFileSystem:do",
-        "workspaceContains:**/*.po",
-        "onLanguage:po",
-        "onFileSystem:po",
-        "workspaceContains:**/*.2mg",
-        "onLanguage:2mg",
-        "onFileSystem:2mg"
+		"workspaceContains:**/*.dsk",
+		"onLanguage:dsk",
+		"onFileSystem:dsk",
+		"workspaceContains:**/*.do",
+		"onLanguage:do",
+		"onFileSystem:do",
+		"workspaceContains:**/*.po",
+		"onLanguage:po",
+		"onFileSystem:po",
+		"workspaceContains:**/*.2mg",
+		"onLanguage:2mg",
+		"onFileSystem:2mg"
 	],
-	"main": "./out/src/extension",
-    "contributes": {
-        "languages": [
-            {
-                "id": "dsk",
-                "extensions": [
-                    ".dsk"
-                ]
-            },
-            {
-                "id": "do",
-                "extensions": [
-                    ".do"
-                ]
-            },
-            {
-                "id": "po",
-                "extensions": [
-                    ".po"
-                ]
-            },
-            {
-                "id": "2mg",
-                "extensions": [
-                    ".2mg"
-                ]
-            }
-        ],
-        "commands": [
-            {
-                "command": "extension.mountApple2FileSystem",
-                "title": "Mount"
-            }
-        ],
-        "menus": {
-            "explorer/context": [
-                {
-                    "when": "resourceLangId == dsk || resourceLangId == do || resourceLangId == po || resourceLangId == 2mg",
-                    "command": "extension.mountApple2FileSystem",
-                    "group": "navigation"
-                }
-            ]
-        }
-    },
-	"scripts": {
-		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./"
+	"main": "./out/extension",
+	"contributes": {
+		"languages": [
+			{
+				"id": "dsk",
+				"extensions": [
+					".dsk"
+				]
+			},
+			{
+				"id": "do",
+				"extensions": [
+					".do"
+				]
+			},
+			{
+				"id": "po",
+				"extensions": [
+					".po"
+				]
+			},
+			{
+				"id": "2mg",
+				"extensions": [
+					".2mg"
+				]
+			}
+		],
+		"customEditors": [
+			{
+				"viewType": "rpwa2.BIN",
+				"displayName": "Apple II HIRES picture",
+				"selector": [
+					{
+						"filenamePattern": "*.BIN"
+					}
+				]
+			}
+		],
+		"commands": [
+			{
+				"command": "extension.mountApple2FileSystem",
+				"title": "Mount"
+			}
+		],
+		"menus": {
+			"explorer/context": [
+				{
+					"when": "resourceLangId == dsk || resourceLangId == do || resourceLangId == po || resourceLangId == 2mg",
+					"command": "extension.mountApple2FileSystem",
+					"group": "navigation"
+				}
+			]
+		}
 	},
+    "scripts": {
+		"vscode:prepublish": "npm run package",
+		"webpack": "webpack --mode development",
+		"webpack-dev": "webpack --mode development --watch",
+        "package": "webpack --mode production --devtool hidden-source-map",
+		"test-compile": "tsc -p ./"
+    },
 	"devDependencies": {
 		"@types/node": "^16.18.34",
 		"@types/vscode": "^1.73.0",
-		"typescript": "^5.1.3"
+		"ts-loader": "^9.5.1",
+		"typescript": "^5.1.3",
+		"webpack": "^5.89.0",
+		"webpack-cli": "^5.1.4"
 	}
 }
