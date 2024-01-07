@@ -239,6 +239,127 @@ class HiresDocument extends Disposable implements vscode.CustomDocument {
 
 //------------------------------------------------------------------------------
 
+class ViewerDocument extends Disposable implements vscode.CustomDocument {
+
+  private readonly _uri: vscode.Uri
+  public documentData: Uint8Array
+
+  static async create(
+    uri: vscode.Uri,
+    backupId: string | undefined
+  ): Promise<ViewerDocument | PromiseLike<ViewerDocument>> {
+    const dataFile = typeof backupId === 'string' ? vscode.Uri.parse(backupId) : uri
+    const fileData = await ViewerDocument.readFile(dataFile)
+    return new ViewerDocument(uri, fileData)
+  }
+
+  private constructor(
+    uri: vscode.Uri,
+    initialContent: Uint8Array
+  ) {
+    super()
+    this._uri = uri
+    this.documentData = initialContent
+  }
+
+  public get uri() {
+    return this._uri
+  }
+
+  private static async readFile(uri: vscode.Uri): Promise<Uint8Array> {
+    return new Uint8Array(await vscode.workspace.fs.readFile(uri))
+  }
+}
+
+export class ViewerProvider implements vscode.CustomReadonlyEditorProvider<ViewerDocument> {
+
+  public static register(context: vscode.ExtensionContext, type: string): vscode.Disposable {
+    return vscode.window.registerCustomEditorProvider(
+      "rpwa2." + type,
+      new ViewerProvider(context, type),
+      {
+        webviewOptions: {
+          retainContextWhenHidden: false
+        },
+        supportsMultipleEditorsPerDocument: false
+      })
+  }
+
+  private readonly context: vscode.ExtensionContext
+  private readonly type: string
+  private readonly webviews = new WebviewCollection()
+
+  constructor(context: vscode.ExtensionContext, type: string) {
+    this.context = context
+    this.type = type
+  }
+
+  async openCustomDocument(
+    uri: vscode.Uri,
+    openContext: { backupId?: string },
+    _token: vscode.CancellationToken
+  ): Promise<ViewerDocument> {
+    return await ViewerDocument.create(uri, openContext.backupId)
+  }
+
+  async resolveCustomEditor(
+    document: ViewerDocument,
+    webviewPanel: vscode.WebviewPanel,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    this.webviews.add(document.uri, webviewPanel)
+    webviewPanel.webview.options = { enableScripts: true }
+    webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview)
+    // webviewPanel.webview.onDidReceiveMessage(e => this.onMessage(document, e))
+
+    // Wait for the webview to be properly ready before we init
+    webviewPanel.webview.onDidReceiveMessage(e => {
+      if (e.type === 'ready') {
+        this.postMessage(webviewPanel, 'init', {
+          type: this.type,
+          value: document.documentData,
+          editable: false
+        })
+      }
+    })
+  }
+
+  private postMessage(panel: vscode.WebviewPanel, type: string, body: any): void {
+    panel.webview.postMessage({ type, body })
+  }
+
+  // private onMessage(document: ViewerDocument, message: any) {
+  // }
+
+  private getHtmlForWebview(webview: vscode.Webview): string {
+
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(
+      this.context.extensionUri, 'out', 'webview.js'));
+
+    const styleMainUri = webview.asWebviewUri(vscode.Uri.joinPath(
+      this.context.extensionUri, 'src', 'data_viewer.css'));
+
+    const nonce = getNonce()
+
+    return `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} blob:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body>
+        <link href="${styleMainUri}" rel="stylesheet" />
+        <div id="top-div"></div>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
+      </body>
+      </html>`
+  }
+}
+
+//------------------------------------------------------------------------------
+
 export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDocument> {
 
   // private static newPawDrawFileId = 1;
@@ -271,7 +392,7 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
       });
   }
 
-  private static readonly viewType = 'rpwa2.BIN';
+  private static readonly viewType = 'rpwa2.PIC';
   private readonly webviews = new WebviewCollection()
 
   constructor(
@@ -342,15 +463,16 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
       if (e.type === 'ready') {
         if (document.uri.scheme === 'untitled') {
           this.postMessage(webviewPanel, 'init', {
+            type: "PIC",
             untitled: true,
             editable: true,
           });
         } else {
-          const editable = vscode.workspace.fs.isWritableFileSystem(document.uri.scheme);
-
+          const editable = vscode.workspace.fs.isWritableFileSystem(document.uri.scheme)
           this.postMessage(webviewPanel, 'init', {
+            type: "PIC",
             value: document.documentData,
-            editable,
+            editable
           });
         }
       }
@@ -378,9 +500,6 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
 
   //#endregion
 
-  /**
-   * Get the static HTML used for in our editor's webviews.
-   */
   private getHtmlForWebview(webview: vscode.Webview): string {
     // Local path to script and css for the webview
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(
@@ -422,12 +541,6 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
       <body>
 
         <link href="${styleMainUri}" rel="stylesheet" />
-
-        <!--
-        <div class="drawing-canvas"></div>
-        <canvas tabindex="-1" id="hires-canvas" width="560px" height="384px" style="image-rendering: pixelated"></canvas>
-        -->
-
         <div id="top-div"></div>
 
         <script nonce="${nonce}" src="${scriptUri}"></script>

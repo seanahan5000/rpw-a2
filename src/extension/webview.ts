@@ -1,13 +1,9 @@
 
 import { DisplayView } from "../display_view"
+import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
 
 // @ts-ignore
 const vscode = acquireVsCodeApi()
-
-// <div class="drawing-canvas"></div>
-// <canvas tabindex="-1" id="hires-canvas" width="560px" height="384px" style="image-rendering: pixelated"></canvas>
-
-// this.hiresCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#hires-canvas")
 
 let displayView: DisplayView
 
@@ -18,22 +14,26 @@ window.addEventListener("message", async e => {
 
       const dataBlob = new Blob([ body.value ])
       const dataArray = await dataBlob.arrayBuffer()
-      const hiresData = new Uint8Array(dataArray)
+      const dataBytes = new Uint8Array(dataArray)
 
       const topDiv = <HTMLDivElement>document.querySelector("#top-div")
-      displayView = new DisplayView(topDiv)
-      displayView.setFrameMemory(hiresData)
-
-      // editor.setEditable(body.editable);
-      // if (body.untitled) {
-      //   await editor.resetUntitled();
-      //   return;
-      // } else {
-      //   // Load the initial image into the canvas.
-      //   await editor.reset(body.value);
-      //   return;
-      // }
-
+      if (body.type == "PIC") {
+        displayView = new DisplayView(topDiv)
+        displayView.setFrameMemory(dataBytes)
+        //*** look at body.editable flag ***
+      } else if (body.type == "BAS") {
+        topDiv.innerHTML = ViewApplesoft.asHtml(dataBytes)
+      } else if (body.type == "INT") {
+        topDiv.innerHTML = ViewInteger.asHtml(dataBytes)
+      } else if (body.type == "TXT") {
+        topDiv.innerHTML = ViewText.asHtml(dataBytes, false)
+      } else if (body.type == "LST") {
+        const address = 0x1000  // ***
+        topDiv.innerHTML = ViewBinaryDisasm.asHtml(dataBytes, address)
+      } else { // if (body.type == "BIN")
+        const address = 0x1000  // ***
+        topDiv.innerHTML = ViewBinaryHex.asHtml(dataBytes, address)
+      }
       break
     }
     case "update": {

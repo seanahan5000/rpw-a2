@@ -1,0 +1,32 @@
+#top-div {
+  font-family: "Menlo", "Monaco", monospace;
+  font-size: 9pt;
+  color: lightgray;
+  white-space: pre;
+}
+
+/* specific to file_viewer classes */
+
+.as-linenum {
+  color: #569CD6;
+}
+
+.as-token {
+  color: #C586C0;
+}
+
+.as-comment {
+  color: #6A9955;
+}
+
+.as-string {
+  color: #CE9178;
+}
+
+.as-colon {
+  color: #ccf;
+}
+
+.bin-addr {
+  color: #569CD6;
+}
