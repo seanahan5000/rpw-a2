@@ -28,11 +28,9 @@ window.addEventListener("message", async e => {
       } else if (body.type == "TXT") {
         topDiv.innerHTML = ViewText.asHtml(dataBytes, false)
       } else if (body.type == "LST") {
-        const address = 0x1000  // ***
-        topDiv.innerHTML = ViewBinaryDisasm.asHtml(dataBytes, address)
+        topDiv.innerHTML = ViewBinaryDisasm.asHtml(dataBytes, body.auxType)
       } else { // if (body.type == "BIN")
-        const address = 0x1000  // ***
-        topDiv.innerHTML = ViewBinaryHex.asHtml(dataBytes, address)
+        topDiv.innerHTML = ViewBinaryHex.asHtml(dataBytes, body.auxType)
       }
       break
     }

@@ -81,7 +81,7 @@ enum StorageType {
 
 export enum ProdosFileType {
   PTX = 0x03,    // Pascal text
-  TXT = 0x04,
+  TXT = 0x04,    // ASCII, high bit clear
   BIN = 0x06,
   DIR = 0x0F,
   AWP = 0x1A,    // AppleWorks Word Processing

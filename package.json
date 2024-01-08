@@ -56,8 +56,8 @@
 		],
 		"customEditors": [
 			{
-				"viewType": "rpwa2.PIC",
-				"displayName": "Apple II HIRES picture",
+				"viewType": "rpwa2.BIN",
+				"displayName": "Hex Data",
 				"selector": [{ "filenamePattern": "*.BIN" }]
 			},
 			{
@@ -76,14 +76,14 @@
 				"selector": [{ "filenamePattern": "*.TXT" }]
 			},
 			{
-				"viewType": "rpwa2.BIN",
-				"displayName": "Hex Data",
-				"selector": [{ "filenamePattern": "*.*" }]
+				"viewType": "rpwa2.LST",
+				"displayName": "6502 Disassembly",
+				"selector": [{ "filenamePattern": "*.SYS" }, { "filenamePattern": "*.BIN" }]
 			},
 			{
-				"viewType": "rpwa2.LST",
-				"displayName": "6502 Assembly",
-				"selector": [{ "filenamePattern": "*.*" }]
+				"viewType": "rpwa2.PIC",
+				"displayName": "Apple II HIRES picture",
+				"selector": [{ "filenamePattern": "*.PIC" }, { "filenamePattern": "*.BIN" }]
 			}
 		],
 		"commands": [

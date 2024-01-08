@@ -312,11 +312,23 @@ export class ViewerProvider implements vscode.CustomReadonlyEditorProvider<Viewe
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview)
     // webviewPanel.webview.onDidReceiveMessage(e => this.onMessage(document, e))
 
+    let auxType = 0x0000
+    let n = document.uri.path.lastIndexOf("_$")
+    if (n >= 0) {
+      const extra = document.uri.path.substring(n + 2)
+      n = extra.lastIndexOf(".")
+      if (n >= 0) {
+        const hex = extra.substring(0, n)
+        auxType = parseInt(hex, 16)
+      }
+    }
+
     // Wait for the webview to be properly ready before we init
     webviewPanel.webview.onDidReceiveMessage(e => {
       if (e.type === 'ready') {
         this.postMessage(webviewPanel, 'init', {
           type: this.type,
+          auxType: auxType,
           value: document.documentData,
           editable: false
         })
