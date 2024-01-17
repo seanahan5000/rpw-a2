@@ -11,7 +11,6 @@ export type SectorData = {
 }
 
 type Dos33DataProc = (sector: SectorData) => boolean
-type Dos33TlsProc = (sector: SectorData) => boolean
 type Dos33FileProc = (fileEntry: Dos33FileEntry) => boolean
 
 export class Dos33FileEntry implements FileEntry {
@@ -67,6 +66,10 @@ export class Dos33FileEntry implements FileEntry {
     return this.volume.getFileContents(this)
   }
 
+  setContents(data: Uint8Array) {
+    this.volume.setFileContents(this, data)
+  }
+
   lock() {
     this.isLocked = true
     this.typeByte |= 0x80
@@ -82,6 +85,7 @@ export class Dos33FileEntry implements FileEntry {
   }
 
   rename(newName: string) {
+    // TODO: more validation on name?
     this.name = newName.toUpperCase()
     let cat = this.volume.image.readTrackSector(this.catTrack, this.catSector)
     let upperName = this.name.padEnd(30)
@@ -114,7 +118,15 @@ export class Dos33Volume {
     this.image = image
   }
 
-  private getVTOC(): Uint8Array {
+  public commitChanges() {
+    this.image.commitChanges()
+  }
+
+  public resetChanges() {
+    this.image.resetChanges()
+  }
+
+  private readVTOC(): Uint8Array {
     return this.image.readTrackSector(17, 0)
   }
 
@@ -123,6 +135,7 @@ export class Dos33Volume {
   //   for (let t = 0; t < this.TracksPerDisk; t += 1) {
   //     for (let s = 0; s < this.SectorsPerTrack; s += 1) {
   //       let sector = this.image.readTrackSector(t, s)
+  //       // *** need to write cleared sector back ***
   //       sector.fill(0)
   //     }
   //   }
@@ -183,10 +196,11 @@ export class Dos33Volume {
   //       t += 1
   //     }
   //   }
+  //   *** write back all data ***
   // }
 
   forEachAllocatedFile(fileProc: Dos33FileProc) {
-    let vtoc = this.getVTOC()
+    let vtoc = this.readVTOC()
     let catTrack = vtoc[1]
     let catSector = vtoc[2]
     while (true) {
@@ -216,46 +230,223 @@ export class Dos33Volume {
     }
   }
 
-  private forEachFreeFile(fileProc: Dos33FileProc) {
-    let vtoc = this.getVTOC()
-    let catTrack = vtoc[1]
-    let catSector = vtoc[2]
-    while (true) {
-      let cat = this.image.readTrackSector(catTrack, catSector)
-      let offset = 0x0B
-      do {
-        // look for never used (0x00) or deleted (0xff)
-        if (cat[offset + 0] == 0x00 || cat[offset + 0] == 0xff) {
-          let fileCat = { track: catTrack, index: catSector, data: cat }
-          let fileEntry = new Dos33FileEntry(this, fileCat, offset)
-          if (!fileProc(fileEntry)) {
-            return
-          }
-        }
-        offset += 0x23
-      } while (offset < 0xff)
+  // private forEachFreeFile(fileProc: Dos33FileProc) {
+  //   let vtoc = this.readVTOC()
+  //   let catTrack = vtoc[1]
+  //   let catSector = vtoc[2]
+  //   while (true) {
+  //     let cat = this.image.readTrackSector(catTrack, catSector)
+  //     let offset = 0x0B
+  //     do {
+  //       // look for never used (0x00) or deleted (0xff)
+  //       if (cat[offset + 0] == 0x00 || cat[offset + 0] == 0xff) {
+  //         let fileCat = { track: catTrack, index: catSector, data: cat }
+  //         let fileEntry = new Dos33FileEntry(this, fileCat, offset)
+  //         if (!fileProc(fileEntry)) {
+  //           return
+  //         }
+  //       }
+  //       offset += 0x23
+  //     } while (offset < 0xff)
+  //
+  //     catTrack = cat[1]
+  //     catSector = cat[2]
+  //     if (catTrack == 0 && catSector == 0) {
+  //       break
+  //     }
+  //   }
+  // }
 
-      catTrack = cat[1]
-      catSector = cat[2]
-      if (catTrack == 0 && catSector == 0) {
+  private changeAllocationBit(track: number, sector: number, newBit: number | undefined): number {
+    let vtoc = this.readVTOC()
+    let offset = 0x38 + track * 4
+    if (sector < 8) {
+      offset += 1
+    }
+    let mask = 1 << (sector & 7)
+    let previous = (vtoc[offset] & mask) ? 1 : 0
+    if (newBit != undefined) {
+      if (newBit == 0) {
+        vtoc[offset] &= ~mask
+      } else {
+        vtoc[offset] |= mask
+      }
+    }
+    return previous
+  }
+
+  private allocateTrackSectorBit(track: number, sector: number): boolean {
+    return this.changeAllocationBit(track, sector, 0) == 1
+  }
+
+  private freeTrackSectorBit(track: number, sector: number): boolean {
+    return this.changeAllocationBit(track, sector, 1) == 0
+  }
+
+  protected testTrackSectorFree(track: number, sector: number): boolean {
+    return this.changeAllocationBit(track, sector, undefined) == 1
+  }
+
+  // private checkForSpace(sectorCount: number): boolean {
+  //   let count = 0
+  //   for (let t = 0; t < this.TracksPerDisk; t += 1) {
+  //     for (let s = 0; s < this.SectorsPerTrack; s += 1) {
+  //       if (this.testTrackSectorFree(t, s)) {
+  //         count += 1
+  //         if (count >= sectorCount) {
+  //           return true
+  //         }
+  //       }
+  //     }
+  //   }
+  //   return false
+  // }
+
+  private allocateSector(): SectorData | undefined {
+    let vtoc = this.readVTOC()
+    let firstTrack = vtoc[0x30]
+    let track = firstTrack
+    let forwardDone = false
+    let backwardDone = false
+    while (true) {
+      for (let s = this.SectorsPerTrack; --s >= 0; ) {
+        if (this.allocateTrackSectorBit(track, s)) {
+          vtoc[0x30] = track
+          let sector = this.image.readTrackSector(track, s)
+          sector.fill(0)
+          return { track: track, index: s, data: sector }
+        }
+      }
+      track = (track + vtoc[0x31]) & 0xff
+      if (track == this.TracksPerDisk) {
+        forwardDone = true
+        vtoc[0x31] = -1
+        track = 16
+      } else if (track == 0xff) {
+        backwardDone = true
+        vtoc[0x31] = 1
+        track = 18
+      }
+      if (forwardDone && backwardDone && track == firstTrack) {
         break
       }
     }
   }
 
-  protected forEachFileSector(fileEntry: Dos33FileEntry, dataProc: Dos33DataProc, tslProc?: Dos33TlsProc) {
+  protected deleteFileEntry(fileEntry: Dos33FileEntry) {
+    this.writeEachFileSector(fileEntry, (sector: SectorData): boolean => {
+      return false
+    })
+    let cat = this.image.readTrackSector(fileEntry.catTrack, fileEntry.catSector)
+    cat[fileEntry.catOffset + 0x20] = cat[fileEntry.catOffset + 0x00]
+    cat[fileEntry.catOffset + 0x00] = 0xff
+  }
+
+  // protected allocateBinFileEntry(fileName: string): Dos33FileEntry | undefined {
+  //   let fileEntry: Dos33FileEntry | undefined
+  //
+  //   this.forEachFreeFile((freeEntry: Dos33FileEntry) => {
+  //     fileEntry = freeEntry
+  //     return false
+  //   })
+  //
+  //   if (!fileEntry) {
+  //     //*** catalog is full ***
+  //     return
+  //   }
+  //
+  //   let tsList = this.allocateSector()
+  //   if (!tsList) {
+  //     //*** disk is full ***
+  //     return
+  //   }
+  //
+  //   // *** fileEntry is a data copy here ***
+  //   fileEntry.tslTrack = tsList.track
+  //   fileEntry.tslSector = tsList.index
+  //   fileEntry.typeByte = 0x04
+  //   fileEntry.isLocked = false
+  //   fileEntry.type = "B"
+  //   fileEntry.name = fileName.toUpperCase()
+  //   fileEntry.sectorLength = 1            // *** should this be 2?
+  //   fileEntry.updateCat()
+  //   return fileEntry
+  // }
+
+  // bsaveFileEntry(fileEntry: Dos33FileEntry, fileData: Dos33FileData) {
+  //   let byteData = this.byteDataFromBinFile(fileData)
+  //   if (!this.resizeFile(fileEntry, byteData.length)) {
+  //     //*** disk is full ***
+  //   }
+  //   this.writeData(fileEntry, byteData)
+  //   return true
+  // }
+
+  //*** fold into bsaveFileEntry? ***
+  // private byteDataFromBinFile(fileData: Dos33FileData) {
+  //   let byteData = new Uint8Array(4 + fileData.data.length)
+  //   byteData[0x00] = fileData.address & 255
+  //   byteData[0x01] = fileData.address >> 8
+  //   byteData[0x02] = fileData.data.length & 255
+  //   byteData[0x03] = fileData.data.length >> 8
+  //   byteData.set(fileData.data, 4)
+  //   return byteData
+  // }
+
+  public getFileContents(entry: FileEntry): Uint8Array {  // *** | undefined?
+    let fileEntry = entry as Dos33FileEntry
+    let length = 0
+    let outData: number[] = []
+    this.readEachFileSector(fileEntry, (sector: SectorData): boolean => {
+      let copySize = sector.data.length
+      let srcOffset = 0
+      if (length == 0) {
+        if (fileEntry.type == "B" || fileEntry.type == "Y") {
+          // TODO: maybe no address for Y type file?
+          fileEntry.auxType = sector.data[srcOffset + 0] + ((sector.data[srcOffset + 1]) << 8)
+          srcOffset += 2
+          copySize -= 2
+        }
+        if (fileEntry.type.match(/[BAIY]/)) {
+          length = sector.data[srcOffset + 0] + ((sector.data[srcOffset + 1]) << 8)
+          srcOffset += 2
+          copySize -= 2
+        }
+      }
+      let inData = Array.from(sector.data)
+      if (fileEntry.type == "T") {
+        for (let i = 0; i < copySize; i += 1) {
+          if (inData[i] == 0) {
+            outData = outData.concat(inData.slice(0, i))
+            length += i
+            return false
+          }
+        }
+        length += copySize
+      }
+      let remaining = length - outData.length
+      if (copySize > remaining) {
+        copySize = remaining
+      }
+      outData = outData.concat(inData.slice(srcOffset, srcOffset + copySize))
+      return true
+    })
+    if (length != outData.length) {
+      throw "Invalid file length"       // *** throw everywhere?
+    }
+    return new Uint8Array(outData)
+  }
+
+  private readEachFileSector(fileEntry: Dos33FileEntry, dataProc: Dos33DataProc) {
     let tslTrack = fileEntry.tslTrack
     let tslSector = fileEntry.tslSector
-    let vtoc = this.getVTOC()
-    let pairsPerTsl = vtoc[0x27]      //*** require this to start and then use constant
+    let vtoc = this.readVTOC()
+    let pairsPerTsl = vtoc[0x27]
     let index = 0
     while (true) {
       let tsList = this.image.readTrackSector(tslTrack, tslSector)
       if (!tsList) {
         console.log(`Invalid T/S list at track ${tslTrack}, sector ${tslSector}`)
-        return
-      }
-      if (tslProc && !tslProc({track: tslTrack, index: tslSector, data: tsList})) {
         return
       }
       index += 1
@@ -296,329 +487,141 @@ export class Dos33Volume {
     }
   }
 
-  private changeAllocationBit(track: number, sector: number, newBit: number | undefined): number {
-    let vtoc = this.getVTOC()
-    let offset = 0x38 + track * 4
-    if (sector < 8) {
-      offset += 1
+  public setFileContents(entry: FileEntry, contents: Uint8Array): boolean {
+    let fileEntry = entry as Dos33FileEntry
+
+    const header: number[] = []
+    if (fileEntry.type == "B" || fileEntry.type == "Y") {
+      // TODO: maybe no address for Y type file?
+      header.push(fileEntry.auxType & 0xff)
+      header.push((fileEntry.auxType >> 8) & 0xff)
     }
-    let mask = 1 << (sector & 7)
-    let previous = (vtoc[offset] & mask) ? 1 : 0
-    if (newBit != undefined) {
-      if (newBit == 0) {
-        vtoc[offset] &= ~mask
-      } else {
-        vtoc[offset] |= mask
-      }
+    if (fileEntry.type.match(/[BAIY]/)) {
+      header.push(contents.length & 0xff)
+      header.push((contents.length >> 8) & 0xff)
     }
-    return previous
-  }
 
-  private allocateTrackSectorBit(track: number, sector: number): boolean {
-    return this.changeAllocationBit(track, sector, 0) == 1
-  }
-
-  private freeTrackSectorBit(track: number, sector: number): boolean {
-    return this.changeAllocationBit(track, sector, 1) == 0
-  }
-
-  protected testTrackSectorFree(track: number, sector: number): boolean {
-    return this.changeAllocationBit(track, sector, undefined) == 1
-  }
-
-  private checkForSpace(sectorCount: number): boolean {
-    let count = 0
-    for (let t = 0; t < this.TracksPerDisk; t += 1) {
-      for (let s = 0; s < this.SectorsPerTrack; s += 1) {
-        if (this.testTrackSectorFree(t, s)) {
-          count += 1
-          if (count >= sectorCount) {
-            return true
-          }
-        }
-      }
+    let data = contents
+    if (header.length > 0) {
+      data = new Uint8Array(header.length + contents.length)
+      data.set(header)
+      data.set(contents, header.length)
     }
-    return false
-  }
 
-  private allocateSector(): SectorData | undefined {
-    let vtoc = this.getVTOC()
-    let firstTrack = vtoc[0x30]
-    let track = firstTrack
-    let forwardDone = false
-    let backwardDone = false
-    while (true) {
-      for (let s = this.SectorsPerTrack; --s >= 0; ) {
-        if (this.allocateTrackSectorBit(track, s)) {
-          vtoc[0x30] = track
-          let sector = this.image.readTrackSector(track, s)
-          sector.fill(0)
-          return { track: track, index: s, data: sector }
-        }
+    let dataOffset = 0
+    this.writeEachFileSector(fileEntry, (sector: SectorData): boolean => {
+      let copySize = Math.min(sector.data.length, data.length - dataOffset)
+      for (let i = 0; i < copySize; i += 1) {
+        sector.data[i] = data[dataOffset + i]
       }
-      track = (track + vtoc[0x31]) & 0xff
-      if (track == this.TracksPerDisk) {
-        forwardDone = true
-        vtoc[0x31] = -1
-        track = 16
-      } else if (track == 0xff) {
-        backwardDone = true
-        vtoc[0x31] = 1
-        track = 18
-      }
-      if (forwardDone && backwardDone && track == firstTrack) {
-        break
-      }
-    }
-  }
-
-  protected deleteFileEntry(fileEntry: Dos33FileEntry) {
-    this.resizeFile(fileEntry, 0)
-
-    let cat = this.image.readTrackSector(fileEntry.catTrack, fileEntry.catSector)
-    cat[fileEntry.catOffset + 0x20] = cat[fileEntry.catOffset + 0x00]
-    cat[fileEntry.catOffset + 0x00] = 0xff
-  }
-
-  protected allocateBinFileEntry(fileName: string): Dos33FileEntry | undefined {
-    let fileEntry: Dos33FileEntry | undefined
-
-    this.forEachFreeFile((freeEntry: Dos33FileEntry) => {
-      fileEntry = freeEntry
-      return false
+      dataOffset += copySize
+      return dataOffset < data.length
     })
 
-    if (!fileEntry) {
-      //*** catalog is full ***
-      return
-    }
-
-    let tsList = this.allocateSector()
-    if (!tsList) {
-      //*** disk is full ***
-      return
-    }
-
-    fileEntry.tslTrack = tsList.track
-    fileEntry.tslSector = tsList.index
-    fileEntry.typeByte = 0x04
-    fileEntry.isLocked = false
-    fileEntry.type = "B"
-    fileEntry.name = fileName.toUpperCase()
-    fileEntry.sectorLength = 1
-    fileEntry.updateCat()
-    return fileEntry
-  }
-
-  // bsaveFileEntry(fileEntry: Dos33FileEntry, fileData: Dos33FileData) {
-  //   let byteData = this.byteDataFromBinFile(fileData)
-  //   if (!this.resizeFile(fileEntry, byteData.length)) {
-  //     //*** disk is full ***
-  //   }
-  //   this.writeData(fileEntry, byteData)
-  //   return true
-  // }
-
-  //*** fold into bsaveFileEntry? ***
-  // private byteDataFromBinFile(fileData: Dos33FileData) {
-  //   let byteData = new Uint8Array(4 + fileData.data.length)
-  //   byteData[0x00] = fileData.address & 255
-  //   byteData[0x01] = fileData.address >> 8
-  //   byteData[0x02] = fileData.data.length & 255
-  //   byteData[0x03] = fileData.data.length >> 8
-  //   byteData.set(fileData.data, 4)
-  //   return byteData
-  // }
-
-  // grow/shrink the number of sectors in the file
-  //  (including a newly allowed empty file)
-  //*** test by deleting damaged files like EDASM.OBJ ***
-  private resizeFile(fileEntry: Dos33FileEntry, newSize: number): boolean {
-
-    let newSectorCount = Math.ceil(newSize / 256)
-    newSectorCount += Math.ceil(newSectorCount / 122)       //*** use constant ***
-    let oldSectorCount = fileEntry.sectorLength
-
-    if (newSectorCount != oldSectorCount) {
-
-      let tsList: Uint8Array | undefined
-      let tslTrack = 0
-      let tslSector = 0
-      let tslOffset = 256
-      let sectorIndex = 0
-      let sectorOffset = 0
-
-      if (newSectorCount > 0 || oldSectorCount > 0) {
-        tsList = this.image.readTrackSector(fileEntry.tslTrack, fileEntry.tslSector)
-        sectorOffset += 122      //*** constant
-        tslOffset = 0x0C
-        sectorIndex += 1
-      }
-
-      if (!tsList) {
-        return false
-      }
-
-      let keepCount = Math.min(newSectorCount, oldSectorCount)
-      while (sectorIndex < keepCount) {
-        if (tslOffset > 254) {
-          tslTrack = tsList[0x01]
-          tslSector = tsList[0x02]
-          tsList = this.image.readTrackSector(tslTrack, tslSector)
-          sectorOffset += 122      //*** constant/compare against existing?
-          tslOffset = 0x0C
-          sectorIndex += 1
-        }
-        tslOffset += 2
-        sectorIndex += 1
-      }
-
-      if (newSectorCount > oldSectorCount) {
-        if (!this.checkForSpace(newSectorCount - oldSectorCount)) {
-          //*** disk is full ***
-          return false
-        }
-
-        while (sectorIndex < newSectorCount) {
-          // check for adding another sector to the track/sector list
-          if (tslOffset > 254) {
-            let tsNextList = this.allocateSector()
-            if (!tsNextList) {
-              return false
-            }
-
-            // track/sector of next T/S list
-            tsList[0x01] = tsNextList.track
-            tsList[0x02] = tsNextList.index
-            // sector offset in file of first sector described by list
-            sectorOffset += 122       //*** use constant ***
-            tsList[0x05] = sectorOffset & 255
-            tsList[0x06] = sectorOffset >> 8
-            tsList = tsNextList.data
-            tslOffset = 0x0C
-            sectorIndex += 1
-          }
-
-          let dataSector = this.allocateSector()
-          if (!dataSector) {
-            return false
-          }
-
-          tsList[tslOffset + 0] = dataSector.track
-          tsList[tslOffset + 1] = dataSector.index
-          tslOffset += 2
-          sectorIndex += 1
-        }
-      } else {    //*** ever == here?
-
-        while (true) {
-
-          let startTslOffset = tslOffset
-
-          while (tslOffset <= 254 && sectorIndex < oldSectorCount) {
-            let t = tsList[tslOffset + 0]
-            let s = tsList[tslOffset + 1]
-            if (t != 0 && s != 0) {
-              this.freeTrackSectorBit(t, s)
-              tsList[tslOffset + 0] = 0
-              tsList[tslOffset + 1] = 0
-              sectorIndex += 1
-            }
-            tslOffset += 2
-          }
-
-          let tslNextTrack = tsList[0x01]
-          let tslNextSector = tsList[0x02]
-          if (startTslOffset == 0x0C) {
-            this.freeTrackSectorBit(tslTrack, tslSector)
-          }
-
-          if (sectorIndex >= oldSectorCount) {
-            break
-          }
-          if (tslTrack == 0 && tslSector == 0) {
-            break
-          }
-          tslTrack = tslNextTrack
-          tslSector = tslNextSector
-          tsList = this.image.readTrackSector(tslTrack, tslSector)
-          tslOffset = 0x0C
-        }
-      }
-
-      // update size in file and catalog entry
-      fileEntry.sectorLength = newSectorCount
-      let cat = this.image.readTrackSector(fileEntry.catTrack, fileEntry.catSector)
-      cat[fileEntry.catOffset + 0x21] = newSectorCount & 0xff
-      cat[fileEntry.catOffset + 0x22] = newSectorCount >> 8
-    }
+    // *** error check ***
 
     return true
   }
 
-  // write data into sectors previously allocated by resizeFile
-  private writeData(fileEntry: Dos33FileEntry, byteData: Uint8Array) {
-    let srcOffset = 0
-    this.forEachFileSector(fileEntry, (sector: SectorData): boolean => {
-      let copySize = sector.data.length
-      let remaining = byteData.length - srcOffset
-      if (copySize > remaining) {
-        copySize = remaining
-      }
-      let startOffset = srcOffset
-      srcOffset += copySize
-      sector.data.set(byteData.subarray(startOffset, srcOffset), 0)
-      return true
-    })
+  // NOTE: this doesn't not correctly handle non-sequential text files
 
-    if (srcOffset != byteData.length) {
-      //*** something went wrong ***
+  private writeEachFileSector(fileEntry: Dos33FileEntry, dataProc: Dos33DataProc): boolean {
+    let vtoc = this.readVTOC()
+    let pairsPerTsl = vtoc[0x27]
+    let moreData = true
+
+    let sectorCount = 1
+    let deltaCount = 0
+    let tslTrack = fileEntry.tslTrack
+    let tslSector = fileEntry.tslSector
+    let tsList = this.image.readTrackSector(tslTrack, tslSector)
+    if (!tsList) {
+      // ERROR: bad track/sector values
+      return false
     }
-  }
 
-  getFileContents(entry: FileEntry): Uint8Array {
-    let fileEntry = entry as Dos33FileEntry
-    // let address = -1
-    let length = 0
-    let outData: number[] = []
-    this.forEachFileSector(fileEntry, (sector: SectorData): boolean => {
-      let copySize = sector.data.length
-      let srcOffset = 0
-      if (length == 0) {
-        if (fileEntry.type == "B" || fileEntry.type == "Y") {   //*** */
-          //*** maybe not for Y
-          fileEntry.auxType = sector.data[srcOffset + 0] + ((sector.data[srcOffset + 1]) << 8)
-          srcOffset += 2
-          copySize -= 2
-        }
-        if (fileEntry.type.match(/[BAIY]/)) {   //*** */
-          length = sector.data[srcOffset + 0] + ((sector.data[srcOffset + 1]) << 8)
-          srcOffset += 2
-          copySize -= 2
-        }
-      }
-      let inData = Array.from(sector.data)
-      if (fileEntry.type == "T") {
-        for (let i = 0; i < copySize; i += 1) {
-          if (inData[i] == 0) {
-            outData = outData.concat(inData.slice(0, i))
-            length += i
+    while (true) {
+
+      const deallocTsList = !moreData
+
+      for (let i = 0; i < pairsPerTsl; i += 1) {
+        let t = tsList[0x0c + i * 2]
+        let s = tsList[0x0d + i * 2]
+        if (moreData) {
+          if (t == 0 && s == 0) {
+            let dataSector = this.allocateSector()
+            if (!dataSector) {
+              // ERROR: failed to allocate another data sector
+              return false
+            }
+            tsList[0x0c + i * 2] = dataSector.track
+            tsList[0x0d + i * 2] = dataSector.index
+            t = dataSector.track
+            s = dataSector.index
+            deltaCount += 1
+          } else {
+            sectorCount += 1
+          }
+
+          let sector = this.image.readTrackSector(t, s)
+          if (!sector) {
+            // ERROR: bad track/sector values
             return false
           }
+          moreData = dataProc({ track: t, index: s, data: sector })
+        } else {
+          if (t != 0 && s != 0) {
+            this.freeTrackSectorBit(t, s)
+            deltaCount -= 1
+            tsList[0x0c + i * 2] = 0
+            tsList[0x0d + i * 2] = 0
+            sectorCount += 1
+          }
         }
-        length += copySize
       }
-      let remaining = length - outData.length
-      if (copySize > remaining) {
-        copySize = remaining
+
+      if (moreData) {
+        tslTrack = tsList[0x01]
+        tslSector = tsList[0x02]
+        if (tslTrack == 0 && tslSector == 0) {
+          let tsSect = this.allocateSector()
+          if (!tsSect) {
+            // ERROR: failed to allocate another tsList sector
+            return false
+          }
+          tslTrack = tsSect.track
+          tslSector = tsSect.index
+          tsList[0x1] = tsSect.track
+          tsList[0x2] = tsSect.index
+          tsList = tsSect.data
+          deltaCount += 1
+        }
+      } else {
+        if (deallocTsList) {
+          this.freeTrackSectorBit(tslTrack, tslSector)
+          deltaCount -= 1
+        }
+        tslTrack = tsList[0x01]
+        tslSector = tsList[0x02]
+        tsList[0x01] = 0
+        tsList[0x02] = 0
+        if (tslTrack == 0 && tslSector == 0) {
+          break
+        }
+        tsList = this.image.readTrackSector(tslTrack, tslSector)
+        if (!tsList) {
+          // ERROR: bad track/sector values
+          return false
+        }
+        sectorCount += 1
+        if (sectorCount >= fileEntry.sectorLength) {
+          break
+        }
       }
-      outData = outData.concat(inData.slice(srcOffset, srcOffset + copySize))
-      return true
-    })
-    if (length != outData.length) {
-      throw "Invalid file length"
     }
-    return new Uint8Array(outData)
+
+    fileEntry.sectorLength = sectorCount + deltaCount
+    return true
   }
 }
 

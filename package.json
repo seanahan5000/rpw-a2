@@ -1,7 +1,7 @@
 {
 	"name": "rpwa2",
 	"displayName": "RPW A2",
-	"description": "File system support for Apple II DOS 3.3 and ProDOS files (.dsk, .do, .po, .2mg)",
+	"description": "File system support for Apple II DOS 3.3 and ProDOS files",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
 	"version": "0.1.0",

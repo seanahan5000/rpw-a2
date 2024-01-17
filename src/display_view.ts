@@ -1,6 +1,7 @@
 
 import { Point, Rect } from "./shared"
 import { IMachineDisplay, Joystick } from "./shared"
+import { IUndoHooks } from "./shared"
 import { HiresTable } from "./shared"
 import { Tool, getModifierKeys } from "./display"
 import { ZoomHiresDisplay } from "./display"
@@ -104,7 +105,7 @@ export class DisplayView {
 
   private foreColorIndex = 3
 
-  constructor(parent: HTMLElement, machineDisplay?: IMachineDisplay, project?: Project) {
+  constructor(parent: HTMLElement, undoHooks?: IUndoHooks, machineDisplay?: IMachineDisplay, project?: Project) {
 
     this.machineDisplay = machineDisplay
     this.project = project
@@ -128,7 +129,7 @@ export class DisplayView {
 
     this.displayDiv = <HTMLDivElement>this.displayGrid.querySelector("#display-div")
     this.hiresCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#hires-canvas")
-    this.hiresDisplay = new ZoomHiresDisplay(this.hiresCanvas, machineDisplay)
+    this.hiresDisplay = new ZoomHiresDisplay(this.hiresCanvas, undoHooks, machineDisplay)
 
     this.toolPalette = <HTMLDivElement>this.displayGrid.querySelector("#tool-palette")
     this.colorPalette = <HTMLDivElement>this.displayGrid.querySelector("#color-palette")
@@ -654,11 +655,6 @@ export class DisplayView {
     this.joystick.y0 = (this.mousePt?.y ?? 0) < 192 ? 0 : 255
     this.joystick.button0 = false
     this.joystick.button1 = false
-  }
-
-  // TODO: get rid of this temporary glue
-  setFrameMemory(hiresData: Uint8Array) {
-    this.hiresDisplay.setFrameMemory(hiresData)
   }
 
   private updateJoystick() {

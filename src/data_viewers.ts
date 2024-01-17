@@ -7,6 +7,48 @@ import { HiresDisplay } from "./display"
 
 //------------------------------------------------------------------------------
 
+// function escapeMarkup (dangerousInput: string) {
+//   const dangerousString = String(dangerousInput);
+//   const matchHtmlRegExp = /["'&<>]/;
+//   const match = matchHtmlRegExp.exec(dangerousString);
+//   if (!match) {
+//     return dangerousInput;
+//   }
+
+//   const encodedSymbolMap = {
+//     '"': '&quot;',
+//     '\'': '&#39;',
+//     '&': '&amp;',
+//     '<': '&lt;',
+//     '>': '&gt;'
+//   };
+//   const dangerousCharacters = dangerousString.split('');
+//   const safeCharacters = dangerousCharacters.map(function (character) {
+//     return encodedSymbolMap[character] || character;
+//   });
+//   const safeString = safeCharacters.join('');
+//   return safeString;
+// }
+
+const escapeMap = new Map<string, string>(Object.entries({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': '&quot;',
+  "'": '&#39;',
+  "/": '&#x2F;'
+}))
+
+// export function escape_html(source: string) {
+//   return String(source).replace(/[&<>"'\/]/g, (s: string) => escapeMap.get(s)!);
+// }
+
+function escapeHtml(source: string) {
+  return String(source).replace(/[&<>"'\/]/g, (s: string) => escapeMap.get(s)!)
+}
+
+//------------------------------------------------------------------------------
+
 export class ViewApplesoft {
 
   static readonly tokens: string[] = [
@@ -15,12 +57,12 @@ export class ViewApplesoft {
     "HGR2",  "HGR",    "HCOLOR=", "HPLOT",  "DRAW",    "XDRAW",  "HTAB",    "HOME",
     "ROT=",  "SCALE=", "SHLOAD",  "TRACE",  "NOTRACE", "NORMAL", "INVERSE", "FLASH",
     "COLOR=","POP",    "VTAB",    "HIMEM:", "LOMEM:",  "ONERR",  "RESUME",  "RECALL",
-    "STORE", "SPEED=", "LET",     "GOTO",   "RUN",     "IF",     "RESTORE", "&",
+    "STORE", "SPEED=", "LET",     "GOTO",   "RUN",     "IF",     "RESTORE", "&amp;",
     "GOSUB", "RETURN", "REM",     "STOP",   "ON",      "WAIT",   "LOAD",    "SAVE",
     "DEF",   "POKE",   "PRINT",   "CONT",   "LIST",    "CLEAR",  "GET",     "NEW",
     "TAB(",  "TO",     "FN",      "SPC(",   "THEN",    "AT",     "NOT",     "STEP",
-    "+",     "-",      "*",       "/",      "^",       "AND",    "OR",      ">",
-    "=",     "<",      "SGN",     "INT",    "ABS",     "USR",    "FRE",     "SCRN(",
+    "+",     "-",      "*",       "&#x2F;", "^",       "AND",    "OR",      "&gt;",
+    "=",     "&lt;",   "SGN",     "INT",    "ABS",     "USR",    "FRE",     "SCRN(",
     "PDL",   "POS",    "SQR",     "RND",    "LOG",     "EXP",    "COS",     "SIN",
     "TAN",   "ATN",    "PEEK",    "LEN",    "STR$",    "VAL",    "ASC",     "CHR$",
     "LEFT$", "RIGHT$", "MID$",    "ERROR",  "ERROR",   "ERROR",  "ERROR",   "ERROR",
@@ -83,8 +125,12 @@ export class ViewApplesoft {
               inString = true
               s = '<span class="as-string">"'
             }
-          } else if (s == " ") {
-            s = " "
+          } else if (s == "&") {
+            s = "&amp;"
+          } else if (s == "<") {
+            s = "&lt;"
+          } else if (s == ">") {
+            s = "&gt;"
           }
           out += s
         }
@@ -169,7 +215,7 @@ export class ViewLisa2 {
         }
       }
       line = line.trimEnd()
-      line = line.replace(/ /g, " ")
+      line = escapeHtml(line)
       out += line
       out += "<br>"
     }
@@ -185,8 +231,8 @@ export class ViewInteger {
   static readonly tokens: string[] = [
     "HIMEM:", "<EOL>",  "_",       ":",      "LOAD",  "SAVE",  "CON",    "RUN",
     "RUN",    "DEL",   ", ",       "NEW",    "CLR",   "AUTO",  ",",      "MAN",
-    "HIMEM:", "LOMEM:", "+",       "-",      "*",     "/",     "=",      "#",
-    ">=",     ">",      "<=",      "<>",     "<",     "AND",   "OR",     "MOD",
+    "HIMEM:", "LOMEM:", "+",       "-",      "*",     "&#x2F;","=",      "#",
+    "&gt;=",  "&gt;",   "&lt;=",  "&lt;&gt;","&lt;",  "AND",   "OR",     "MOD",
     "^",      "+",      "(",       ",",      "THEN",  "THEN",  ",",      ",",
     "\"",     "\"",     "(",       "!",      "!",     "(",     "PEEK",   "RND",
     "SGN",    "ABS",    "PDL",     "RNDX",   "(",     "+",     "-",      "NOT",
@@ -252,11 +298,15 @@ export class ViewInteger {
               break
             }
             offset += 1
-            let s = String.fromCharCode(byte & 0x7f)
-            if (s == " ") {
-              s = " "
+            let char = String.fromCharCode(byte & 0x7f)
+            if (char == "&") {
+              char = "&amp;"
+            } else if (char == "<") {
+              char = "&lt;"
+            } else if (char == ">") {
+              char = "&gt;"
             }
-            out += s
+            out += char
           }
           out += '"</span>'
         } else if (byte >= 0xb0 && byte <= 0xb9) {
@@ -349,7 +399,9 @@ export class ViewText {
         out += "<br>"
       } else {
         let char = String.fromCharCode(data[i] & 0x7f)
-        if (char == "<") {
+        if (char == "&") {
+          char = "&amp;"
+        } else if (char == "<") {
           char = "&lt;"
         } else if (char == ">") {
           char = "&gt;"
@@ -399,7 +451,9 @@ export class ViewBinaryHex {
 
             if (byte >= 0x20) {
               let char = String.fromCharCode(byte)
-              if (char == "<") {
+              if (char == "&") {
+                char = "&amp;"
+              } else if (char == "<") {
                 char = "&lt;"
               } else if (char == ">") {
                 char = "&gt;"

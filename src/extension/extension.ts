@@ -7,10 +7,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // *** are all of these needed?
   // *** make writeable later ***
-  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('dsk', a2fs, { isReadonly: true, isCaseSensitive: true }))
-  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('do', a2fs, { isReadonly: true, isCaseSensitive: true }))
-  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('po', a2fs, { isReadonly: true, isCaseSensitive: true }))
-  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('2mg', a2fs, { isReadonly: true, isCaseSensitive: true }))
+  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('dsk', a2fs, { isReadonly: false, isCaseSensitive: false }))
+  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('do', a2fs, { isReadonly: false, isCaseSensitive: false }))
+  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('po', a2fs, { isReadonly: false, isCaseSensitive: true }))
+  context.subscriptions.push(vscode.workspace.registerFileSystemProvider('2mg', a2fs, { isReadonly: false, isCaseSensitive: true }))
 
   context.subscriptions.push(HiresEditorProvider.register(context))
   context.subscriptions.push(ViewerProvider.register(context, "LST"))

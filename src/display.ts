@@ -32,7 +32,7 @@
 //
 //  - save work so auto-update doesn't throw it away
 
-import { PixelData } from "./shared"
+import { IUndoHooks, PixelData } from "./shared"
 import { Point, Size, Rect, pointInRect, rectIsEmpty } from "./shared"
 import { IMachineDisplay } from "./shared"
 import { SCREEN_WIDTH, SCREEN_HEIGHT, HiresFrame, HiresTable } from "./shared"
@@ -108,10 +108,13 @@ export class HiresDisplay {
 
   protected useInterlaceLines = true
 
+  protected undoHooks?: IUndoHooks
+
   public onToolRectChanged?: any  // TODO: use a real type
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, undoHooks?: IUndoHooks) {
     this.canvas = canvas
+    this.undoHooks = undoHooks
     this.displayScale = 2    // always 2 for HIRES, would be 1 for DHIRES
 
     this.frame = new HiresFrame()
@@ -522,9 +525,9 @@ export class ZoomHiresDisplay extends HiresDisplay {
   private showGridLines = true
   private useTransparent = true
 
-  constructor(canvas: HTMLCanvasElement, machineDisplay?: IMachineDisplay) {
+  constructor(canvas: HTMLCanvasElement, undoHooks?: IUndoHooks, machineDisplay?: IMachineDisplay) {
 
-    super(canvas)
+    super(canvas, undoHooks)
 
     this.machineDisplay = machineDisplay
     this.pageIndex = 0
@@ -805,6 +808,10 @@ export class ZoomHiresDisplay extends HiresDisplay {
       this.undoHistory = this.undoHistory.slice(1)
     }
     this.undoHistory.push(savedFrame)
+
+    if (this.undoHooks) {
+      this.undoHooks.capturedUndo(this.undoIndex)
+    }
   }
 
   undo() {
@@ -823,6 +830,9 @@ export class ZoomHiresDisplay extends HiresDisplay {
         this.frame.copyFrom(this.undoHistory[this.undoHistory.length - this.undoIndex])
         this.updateToMemory()
       }
+      if (this.undoHooks) {
+        this.undoHooks.didUndo(this.undoIndex)
+      }
     }
   }
 
@@ -837,6 +847,9 @@ export class ZoomHiresDisplay extends HiresDisplay {
           this.undoHistory = this.undoHistory.slice(0, this.undoHistory.length - 1)
           this.undoIndex -= 1
         }
+      }
+      if (this.undoHooks) {
+        this.undoHooks.didRedo(this.undoIndex)
       }
     }
   }
