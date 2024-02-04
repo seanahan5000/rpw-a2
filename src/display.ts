@@ -1,6 +1,5 @@
 
 // TODO:
-//
 //  - coordinate information (cleanup)
 //    - selection size, screen position, byte address
 //
@@ -14,31 +13,26 @@
 //  ? change cursor when over resize area of "actual size" overlay
 //  ? if actual size overlay larger than zoom, show bounding box
 //
-//  - brush tool
-//  - erase tool
-//  - line tool
-//  - magnifier tool
+//  - brush, lasso, line, magnifier tools
+//  ? erase tool
 //  - move (hand) tool (left/right for mouse)
-//    - "fling" with deceleration?
 //  - tool tips for paint tools (description and key shortcut)
 //
 //  - tool cursors
 //    - change select cursor if over current selection versus not
 //    - change cursor over zoom overlay
-//  - fix undo after selection move
-//  - include selection state in undo (text too)
-//  - text tool (Naja-specific), including paste
-//  - refactor into separate paint class, standalone paint program
+//  ? text tool (Naja-specific), including paste
 //
 //  - save work so auto-update doesn't throw it away
 
-import { IUndoHooks, PixelData } from "./shared"
+import { IHostHooks, PixelData } from "./shared"
 import { Point, Size, Rect, pointInRect, rectIsEmpty } from "./shared"
 import { IMachineDisplay } from "./shared"
 import { SCREEN_WIDTH, SCREEN_HEIGHT, HiresFrame, HiresTable } from "./shared"
 
 // import { packNaja1, packNaja2 } from "./pack"
 // import { textFromNaja, textFromPixels, imageFromText } from "./hex_parser"
+import { textFromPixels, imageFromText } from "./copy_paste"
 
 //------------------------------------------------------------------------------
 
@@ -108,13 +102,11 @@ export class HiresDisplay {
 
   protected useInterlaceLines = true
 
-  protected undoHooks?: IUndoHooks
+  public onToolChanged?: (toolIndex: Tool) => void
+  public onToolRectChanged?: (toolRect: Rect) => void
 
-  public onToolRectChanged?: any  // TODO: use a real type
-
-  constructor(canvas: HTMLCanvasElement, undoHooks?: IUndoHooks) {
+  constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
-    this.undoHooks = undoHooks
     this.displayScale = 2    // always 2 for HIRES, would be 1 for DHIRES
 
     this.frame = new HiresFrame()
@@ -483,9 +475,17 @@ enum MouseMode {
   OverlayResize,
 }
 
+export type UndoState = {
+  frame: HiresFrame
+  tool: Tool
+  toolRect?: Rect
+  selectBits?: PixelData
+  selectBack?: PixelData
+}
+
 export class ZoomHiresDisplay extends HiresDisplay {
 
-  private machineDisplay?: IMachineDisplay
+  private machineDisplay: IMachineDisplay
   private pageIndex: number
 
   private zoomData?: ImageData
@@ -502,7 +502,9 @@ export class ZoomHiresDisplay extends HiresDisplay {
   protected pageSize: Size            // 280x192, or changed by subclass
   private scrollSize: Size            // pageSize * this.totalScale
   private windowRect: Rect            // canvas size within scrollSize
+
   private selectBits?: PixelData
+  private selectBack?: HiresFrame
 
   private tool = Tool.Move
   private savedTool = Tool.Move       // valid between mouse down and mouse up
@@ -517,17 +519,19 @@ export class ZoomHiresDisplay extends HiresDisplay {
   private currPt  : Point = { x: 0, y: 0 }  // in screen pixel coordinates
   private toolRect: Rect                    // in screen pixel coordinates
 
-  private undoHistory: HiresFrame [] = []
-  private undoIndex = 0
+  private undoHistory: UndoState[] = []
+  private undoCurrentIndex = 0
+  private undoSavedIndex = 0
+  private hostHooks?: IHostHooks
 
   private scrollTimerId?: NodeJS.Timeout
 
   private showGridLines = true
   private useTransparent = true
 
-  constructor(canvas: HTMLCanvasElement, undoHooks?: IUndoHooks, machineDisplay?: IMachineDisplay) {
+  constructor(canvas: HTMLCanvasElement, machineDisplay: IMachineDisplay) {
 
-    super(canvas, undoHooks)
+    super(canvas)
 
     this.machineDisplay = machineDisplay
     this.pageIndex = 0
@@ -752,8 +756,8 @@ export class ZoomHiresDisplay extends HiresDisplay {
   setTool(tool: Tool) {
     if (tool != this.tool) {
       // clear currently active tool state
-      this.selectBits = undefined
-      this.clearToolRect()
+
+      this.dropSelectBits()
       this.updateCanvas()
 
       if (this.scrollTimerId) {
@@ -762,6 +766,9 @@ export class ZoomHiresDisplay extends HiresDisplay {
       }
 
       this.tool = tool
+      if (this.onToolChanged) {
+        this.onToolChanged(this.tool)
+      }
     }
   }
 
@@ -797,62 +804,100 @@ export class ZoomHiresDisplay extends HiresDisplay {
     return "#" + color.toString(16).padStart(6, "0")
   }
 
-  captureUndo() {
-    let savedFrame = new HiresFrame(this.frame)
-    if (this.undoIndex != 0) {
-      this.undoHistory = this.undoHistory.slice(0, this.undoHistory.length - this.undoIndex)
-      this.undoIndex = 0
-    }
-    // cap undo history at arbitrary level
-    if (this.undoHistory.length >= 100) {
-      this.undoHistory = this.undoHistory.slice(1)
-    }
-    this.undoHistory.push(savedFrame)
+  //------------------------------------
+  // Undo/redo handling
+  //------------------------------------
 
-    if (this.undoHooks) {
-      this.undoHooks.capturedUndo(this.undoIndex)
+  public setHostHooks(hostHooks: IHostHooks) {
+    this.hostHooks = hostHooks
+  }
+
+  private captureUndo(fullCapture = true) {
+    // capture will invalidate those undos past the current, so delete them
+    if (this.undoCurrentIndex < this.undoHistory.length) {
+      this.undoHistory = this.undoHistory.slice(0, this.undoCurrentIndex)
+      if (this.undoSavedIndex > this.undoCurrentIndex) {
+        this.undoSavedIndex = -1
+      }
+    }
+
+    let savedState: UndoState = {
+      frame: new HiresFrame(this.selectBack ? this.selectBack : this.frame),
+      tool: this.tool
+    }
+    if (this.tool == Tool.Select) {
+      savedState.toolRect = {...this.toolRect}
+      savedState.selectBits = this.selectBits
+    }
+
+    this.undoHistory.push(savedState)
+
+    if (fullCapture) {
+      this.undoCurrentIndex += 1
+
+      if (this.hostHooks) {
+        this.hostHooks.capturedUndo(this.undoCurrentIndex)
+      }
     }
   }
 
-  undo() {
-    if (this.undoHistory.length > 0) {
-      // save current frame before undoing
-      if (this.undoIndex == 0) {
-        this.captureUndo()
-        this.undoIndex += 1
+  public undo() {
+    if (this.undoCurrentIndex > 0) {
+      // if currentIndex is at the end of history,
+      //  need to capture changes on screen before undo them
+      if (this.undoCurrentIndex == this.undoHistory.length) {
+        this.captureUndo(false)
       }
-      if (this.undoIndex < this.undoHistory.length) {
-        this.undoIndex += 1
-        // TODO: if cancelling a selection move, need to undo twice
-        this.selectBits = undefined
-        this.clearToolRect()
+      this.undoCurrentIndex -= 1
+      this.applyUndoState()
+    }
+  }
 
-        this.frame.copyFrom(this.undoHistory[this.undoHistory.length - this.undoIndex])
-        this.updateToMemory()
-      }
-      if (this.undoHooks) {
-        this.undoHooks.didUndo(this.undoIndex)
+  public redo() {
+    if (this.undoCurrentIndex + 1 < this.undoHistory.length) {
+      this.undoCurrentIndex += 1
+      this.applyUndoState()
+      // if redoing top/current frame, remove it
+      if (this.undoCurrentIndex + 1 == this.undoHistory.length) {
+        this.undoHistory = this.undoHistory.slice(0, this.undoHistory.length - 1)
       }
     }
   }
 
-  redo() {
-    if (this.undoHistory.length > 0) {
-      if (this.undoIndex > 0) {
-        this.undoIndex -= 1
-        this.frame.copyFrom(this.undoHistory[this.undoHistory.length - this.undoIndex])
-        this.updateToMemory()
-        // if redoing top/current frame, remove it
-        if (this.undoIndex == 1) {
-          this.undoHistory = this.undoHistory.slice(0, this.undoHistory.length - 1)
-          this.undoIndex -= 1
-        }
-      }
-      if (this.undoHooks) {
-        this.undoHooks.didRedo(this.undoIndex)
-      }
+  public saveUndo() {
+    this.undoSavedIndex = this.undoCurrentIndex
+  }
+
+  public revertUndo(index: number) {
+    if (index >= 0 && index < this.undoHistory.length) {
+      this.undoCurrentIndex = index
+      this.undoSavedIndex = index
+      this.applyUndoState()
     }
   }
+
+  private applyUndoState() {
+    const undoState = this.undoHistory[this.undoCurrentIndex]
+    this.setTool(undoState.tool)
+    if (undoState.toolRect) {
+      this.toolRect = {...undoState.toolRect}
+    } else {
+      this.toolRect = { x: 0, y: 0, width: 0, height: 0 }
+    }
+    this.selectBits = undoState.selectBits
+    this.toolRectChanged()
+    this.frame.copyFrom(undoState.frame)
+    if (this.selectBits) {
+      this.selectBack = new HiresFrame(this.frame)
+      this.drawImage(this.selectBits, this.toolRect)
+    } else {
+      this.selectBack = undefined
+    }
+    this.updateToMemory()
+    this.updateCanvas()
+  }
+
+  //------------------------------------
 
   toolDown(canvasPt: Point, modifiers: number) {
     this.savedTool = this.tool
@@ -882,24 +927,11 @@ export class ZoomHiresDisplay extends HiresDisplay {
         // compute offset from cursor to top/left of selection
         this.startPt.x -= this.toolRect.x
         this.startPt.y -= this.toolRect.y
-        if (this.selectBits) {
-          // leave replicated selection
-          if (modifiers & ModifierKeys.OPTION) {
-            this.captureUndo()
-          }
-        } else {
-          this.captureUndo()
-          this.selectBits = this.captureRect(this.toolRect)
-          if (!(modifiers & ModifierKeys.OPTION)) {
-            this.fillRect(this.toolRect, this.backColor)
-            // TODO: do fill during redraw to avoid double captureUndo
-            this.captureUndo()
-          }
-        }
+        this.liftSelectBits(modifiers)
         this.moveSelection()
         this.scrollProc(modifiers)
       } else {
-        this.selectBits = undefined
+        this.dropSelectBits()
         this.startPt = this.screenFromCanvasFloat(this.canvasPt)
         this.currPt = this.startPt
         this.rebuildSelectRect()
@@ -925,6 +957,32 @@ export class ZoomHiresDisplay extends HiresDisplay {
       this.toolRect.height = 0
       this.toolRectChanged()
     }
+  }
+
+  private liftSelectBits(modifiers: number) {
+    if (this.selectBits) {
+      this.captureUndo()
+      // leave replicated selection
+      if (modifiers & ModifierKeys.OPTION) {
+        this.selectBack = new HiresFrame(this.frame)
+      }
+    } else {
+      this.captureUndo()
+      this.selectBits = this.captureRect(this.toolRect)
+      if (!(modifiers & ModifierKeys.OPTION)) {
+        this.fillRect(this.toolRect, this.backColor)
+      }
+      this.selectBack = new HiresFrame(this.frame)
+    }
+  }
+
+  private dropSelectBits() {
+    if (this.selectBits) {
+      this.captureUndo()
+      this.selectBits = undefined
+      this.selectBack = undefined
+    }
+    this.clearToolRect()
   }
 
   toolMove(canvasPt: Point, modifiers: number) {
@@ -963,20 +1021,7 @@ export class ZoomHiresDisplay extends HiresDisplay {
 
   toolArrow(direction: number, modifiers: number) {
     if (this.tool == Tool.Select) {
-      if (this.selectBits) {
-        // leave replicated selection
-        if (modifiers & ModifierKeys.OPTION) {
-          this.captureUndo()
-        }
-      } else {
-        this.captureUndo()
-        this.selectBits = this.captureRect(this.toolRect)
-        if (!(modifiers & ModifierKeys.OPTION)) {
-          this.fillRect(this.toolRect, this.backColor)
-          // TODO: do fill during redraw to avoid double captureUndo
-          this.captureUndo()
-        }
-      }
+      this.liftSelectBits(modifiers)
       if (direction == 0) {
         this.toolRect.y -= 1
       } else if (direction == 1) {
@@ -1000,8 +1045,11 @@ export class ZoomHiresDisplay extends HiresDisplay {
       clearTimeout(this.scrollTimerId)
       this.scrollTimerId = undefined
     }
-    this.tool = this.savedTool
     this.mouseMode = MouseMode.None
+    this.tool = this.savedTool
+    if (this.onToolChanged) {
+      this.onToolChanged(this.tool)
+    }
   }
 
   private togglePencilBits() {
@@ -1149,89 +1197,91 @@ export class ZoomHiresDisplay extends HiresDisplay {
     this.scrollTimerId = setTimeout(() => { this.scrollProc(modifiers) }, 50)
   }
 
-  copySelection(compress: boolean, cutToo: boolean = false) {
-    if (this.tool == Tool.Select) {
-      let pixelData: PixelData
-      // selection is already floating
-      if (this.selectBits) {
-        pixelData = this.selectBits
-        if (cutToo) {
-          this.selectBits = undefined
-          this.clearToolRect()
-          this.updateToMemory()
-        }
-      } else {
-        let r = this.toolRect
-        if (rectIsEmpty(r)) {
-          r = { x: 0, y: 0, width: this.pageSize.width, height: this.pageSize.height }
-        }
-        pixelData = this.captureRect(r)
-        if (cutToo) {
-          // TODO: share with clearSelection
-          this.captureUndo()
-          this.fillRect(r, this.backColor)
-          this.clearToolRect()
-          this.updateToMemory()
-        }
-      }
-
-      // let imageText: string
-      // if (compress) {
-      //   // let byteData = packNaja1(pixelData)
-      //   let byteData = packNaja2(pixelData)
-      //   imageText = textFromNaja(byteData)
-      // } else {
-      //   imageText = textFromPixels(pixelData)
-      // }
-      // navigator.clipboard.writeText(imageText).then(() => {})
-    }
+  cutSelection(compress: boolean) {
+    this.cutCopyClearSelection(true, true, compress)
   }
 
-  cutSelection(compress: boolean) {
-    this.copySelection(compress, true)
+  copySelection(compress: boolean) {
+    this.cutCopyClearSelection(true, false, compress)
+  }
+
+  clearSelection() {
+    this.cutCopyClearSelection(false, true, false)
+  }
+
+  private cutCopyClearSelection(copy: boolean, clear: boolean, compress: boolean) {
+    if (this.tool == Tool.Select) {
+      if (!rectIsEmpty(this.toolRect)) {
+        let pixelData: PixelData | undefined
+        if (this.selectBits) {
+          if (copy) {
+            pixelData = this.selectBits
+          }
+          if (clear) {
+            this.captureUndo()
+            if (this.selectBack) {
+              this.frame.copyFrom(this.selectBack)
+            }
+            this.selectBits = undefined
+            this.selectBack = undefined
+            this.clearToolRect()
+            this.moveSelection()
+          }
+        } else {
+          if (copy) {
+            let r = this.toolRect
+            if (rectIsEmpty(r)) {
+              r = { x: 0, y: 0, width: this.pageSize.width, height: this.pageSize.height }
+            }
+            pixelData = this.captureRect(r)
+          }
+          if (clear) {
+            this.captureUndo()
+            this.fillRect(this.toolRect, this.backColor)
+            this.clearToolRect()
+            this.updateToMemory()
+          }
+        }
+
+        if (pixelData) {
+          let imageText: string
+          // if (compress) {
+          //   // let byteData = packNaja1(pixelData)
+          //   let byteData = packNaja2(pixelData)
+          //   imageText = textFromNaja(byteData)
+          // } else {
+            imageText = textFromPixels(pixelData)
+          // }
+          navigator.clipboard.writeText(imageText).then(() => {})
+        }
+      }
+    }
   }
 
   pasteSelection(clipText: string, canvasPt?: Point) {
     // TODO: possibly update cursor
     // TODO: support pasting text as characters
-    // let screenPt = canvasPt ? this.screenFromCanvasFloat(canvasPt) : canvasPt
-    // let image = imageFromText(clipText)
-    // if (image) {
-    //   this.pasteImage(image, screenPt)
-    //   // TODO: may need to update cursor to match change to select tool
-    // }
-  }
-
-  clearSelection() {
-    if (this.tool == Tool.Select) {
-      if (!rectIsEmpty(this.toolRect)) {
-        if (this.selectBits) {
-          this.selectBits = undefined
-          this.clearToolRect()
-          this.moveSelection()
-        } else {
-          // TODO: share with copySelection
-          this.captureUndo()
-          this.fillRect(this.toolRect, this.backColor)
-          this.clearToolRect()
-          this.updateToMemory()
-        }
-      }
+    let screenPt = canvasPt ? this.screenFromCanvasFloat(canvasPt) : canvasPt
+    let image = imageFromText(clipText)
+    if (image) {
+      this.pasteImage(image, screenPt)
+      // TODO: may need to update cursor to match change to select tool
     }
   }
 
   flipSelection(horizontal: boolean, vertical: boolean) {
-    if (horizontal|| vertical) {
+    if (horizontal || vertical) {
       if (this.tool == Tool.Select) {
+        this.captureUndo()
         if (!this.selectBits) {
-          this.captureUndo()
           this.selectBits = this.captureRect(this.toolRect)
+          this.selectBack = new HiresFrame(this.frame)
         }
         if (horizontal) {
-          this.flipImageHorizontal(this.selectBits)
+          this.selectBits = this.flipImageHorizontal(this.selectBits)
         }
         if (vertical) {
-          this.flipImageVertical(this.selectBits)
+          this.selectBits = this.flipImageVertical(this.selectBits)
         }
         this.moveSelection()
         this.updateCanvas()
@@ -1246,8 +1296,7 @@ export class ZoomHiresDisplay extends HiresDisplay {
 
   setSelection(rect: Rect, trim: boolean = false) {
     if (this.selectBits) {
-      this.selectBits = undefined
-      this.clearToolRect()
+      this.dropSelectBits()
       this.moveSelection()
     }
     this.setTool(Tool.Select)
@@ -1444,13 +1493,13 @@ export class ZoomHiresDisplay extends HiresDisplay {
   }
 
   private moveSelection() {
-    this.frame.copyFrom(this.undoHistory[this.undoHistory.length - this.undoIndex - 1])
-    if (this.selectBits) {
+    if (this.selectBack && this.selectBits) {
+      this.frame.copyFrom(this.selectBack)
       this.drawImage(this.selectBits, this.toolRect)
     }
     this.updateToMemory()
 
-    // force a selection redraw incase the selection contents
+    // force a selection redraw in case the selection contents
     //  exactly match existing screen contents (empty dirty rectangle)
     this.updateCanvas()
   }
@@ -1468,6 +1517,13 @@ export class ZoomHiresDisplay extends HiresDisplay {
 
   pasteImage(image: PixelData, screenPt?: Point) {
 
+    // drop any previous selection
+    if (this.selectBits) {
+      this.dropSelectBits()
+    } else {
+      this.captureUndo()
+    }
+
     let screenRect = {
       x: Math.floor(this.windowRect.x / this.totalScale),
       y: Math.floor(this.windowRect.y / this.totalScale),
@@ -1481,8 +1537,8 @@ export class ZoomHiresDisplay extends HiresDisplay {
     //  when display resized to larger than screen
 
     this.setTool(Tool.Select)
-    this.captureUndo()
     this.selectBits = image
+    this.selectBack = new HiresFrame(this.frame)
     let x: number
     let y: number
     if (screenPt && pointInRect(screenPt, screenRect)) {
@@ -1518,7 +1574,7 @@ export class ZoomHiresDisplay extends HiresDisplay {
   }
 
   private moveRectangle() {
-    this.frame.copyFrom(this.undoHistory[this.undoHistory.length - this.undoIndex - 1])
+    this.frame.copyFrom(this.undoHistory[this.undoCurrentIndex - 1].frame)
     if (this.tool == Tool.FillRect || this.toolRect.width < 4 || this.toolRect.height < 2) {
       this.fillRect(this.toolRect, this.foreColor)
     } else {
@@ -1628,44 +1684,46 @@ export class ZoomHiresDisplay extends HiresDisplay {
     }
   }
 
-  private flipImageHorizontal(image: PixelData) {
-    let byteWidth = image.getByteWidth()
+  private flipImageHorizontal(inImage: PixelData): PixelData {
+    const outImage = new PixelData()
+    outImage.bounds = {...inImage.bounds}
+    outImage.dataBytes = new Uint8Array(inImage.dataBytes.length)
+    const byteWidth = outImage.getByteWidth()
     let offset = 0
-    let buffer = new Array(byteWidth)
-    for (let y = 0; y < image.bounds.height; y += 1) {
+    for (let y = 0; y < outImage.bounds.height; y += 1) {
       for (let x = 0; x < byteWidth; x += 1) {
-        let inValue = image.dataBytes[offset + x]
+        let inValue = inImage.dataBytes[offset + x]
         let outValue = (inValue >= 0x80) ? 1 : 0
         for (let b = 0; b < 7; b += 1) {
           outValue = (outValue << 1) | (inValue & 1)
           inValue >>= 1
         }
-        buffer[byteWidth - 1 - x] = outValue
-      }
-      for (let x = 0; x < byteWidth; x += 1) {
-        image.dataBytes[offset + x] = buffer[x]
+        outImage.dataBytes[offset + byteWidth - 1 - x] = outValue
       }
       offset += byteWidth
     }
-    let leftModX = image.bounds.x % 7
-    let rightModX = (7 - ((image.bounds.x + image.bounds.width) % 7)) % 7
-    image.bounds.x += rightModX - leftModX
+    const leftModX = outImage.bounds.x % 7
+    const rightModX = (7 - ((outImage.bounds.x + outImage.bounds.width) % 7)) % 7
+    outImage.bounds.x += rightModX - leftModX
+    return outImage
   }
 
-  private flipImageVertical(image: PixelData) {
-    let byteWidth = image.getByteWidth()
+  private flipImageVertical(inImage: PixelData): PixelData {
+    const outImage = new PixelData()
+    outImage.bounds = {...inImage.bounds}
+    outImage.dataBytes = new Uint8Array(inImage.dataBytes.length)
+    const byteWidth = outImage.getByteWidth()
     let topOffset = 0
-    let botOffset = (image.bounds.height - 1) * byteWidth
-    let halfHeight = Math.floor(image.bounds.height / 2)
-    for (let y = 0; y < halfHeight; y += 1) {
+    let botOffset = (outImage.bounds.height - 1) * byteWidth
+    for (let y = 0; y < outImage.bounds.height; y += 1) {
       for (let x = 0; x < byteWidth; x += 1) {
-        let value = image.dataBytes[topOffset + x]
-        image.dataBytes[topOffset + x] = image.dataBytes[botOffset + x]
-        image.dataBytes[botOffset + x] = value
+        const value = inImage.dataBytes[topOffset + x]
+        outImage.dataBytes[botOffset + x] = value
       }
       topOffset += byteWidth
       botOffset -= byteWidth
     }
+    return outImage
   }
 
   private captureRect(r: Rect): PixelData {
@@ -1814,12 +1872,12 @@ export class ZoomHiresDisplay extends HiresDisplay {
   //----------------------------------------------------------------------------
 
   updateFromMemory() {
-    this.machineDisplay?.getDisplayMemory(this.frame, this.pageIndex)
+    this.machineDisplay.getDisplayMemory(this.frame, this.pageIndex)
     this.updateIndexBuffer()
   }
 
   updateToMemory() {
-    this.machineDisplay?.setDisplayMemory(this.frame, this.pageIndex)
+    this.machineDisplay.setDisplayMemory(this.frame, this.pageIndex)
     this.updateIndexBuffer()
   }
 

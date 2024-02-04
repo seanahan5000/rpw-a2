@@ -1,10 +1,7 @@
 
-//------------------------------------------------------------------------------
+import { DiskImage, BlockData } from "./disk_image"
 
-export type BlockData = {
-  index: number
-  data: Uint8Array
-}
+//------------------------------------------------------------------------------
 
 // *** change to type of (Dos33FileEntry | ProdosFileEntry) ***
   // *** but *AFTER* Dos33 code has been updated ***
@@ -40,66 +37,9 @@ export enum ProdosFileType {
 type ProdosDataProc = (block: BlockData, fileOffset: number) => boolean
 type ProdosFileProc = (fileEntry: ProdosFileEntry) => boolean
 
-//------------------------------------------------------------------------------
-
-export class DiskImage {
-  private data: Uint8Array
-  private isReadOnly: boolean
-  private changeMap = new Map<number, Uint8Array>()
-
-  constructor(data: Uint8Array, isReadOnly: boolean) {
-    this.data = data
-    this.isReadOnly = isReadOnly
-  }
-
-  public getBlockCount() {
-    return Math.floor(this.data.length / 512)
-  }
-
-  // used by Dos 3.3
-
-  public readTrackSector(t: number, s: number): Uint8Array {
-    let offset = (t * 16 + s) * 256
-    if (this.isReadOnly) {
-      return this.data.subarray(offset, offset + 256)
-    }
-    let data = this.changeMap.get(offset)
-    if (!data) {
-      data = this.data.subarray(offset, offset + 256)
-      this.changeMap.set(offset, data)
-    }
-    return data
-  }
-
-  // used by Prodos
-
-  public readBlock(index: number): Uint8Array {
-    let offset = index * 512
-    if (this.isReadOnly) {
-      return this.data.subarray(offset, offset + 512)
-    }
-    let data = this.changeMap.get(offset)
-    if (!data) {
-      data = this.data.subarray(offset, offset + 512)
-      this.changeMap.set(offset, data)
-    }
-    return data
-  }
-
-  // copy all changes cached in changeMap back to image data
-  commitChanges() {
-    if (!this.isReadOnly && this.changeMap.size > 0) {
-      for (let [offset, data] of this.changeMap) {
-        this.data.set(data, offset)
-      }
-      this.resetChanges()
-    }
-  }
-
-  resetChanges() {
-    if (!this.isReadOnly) {
-      this.changeMap = new Map<number, Uint8Array>()
-    }
+export class DiskFullError extends Error {
+  constructor() {
+    super("Disk full")
   }
 }
 
@@ -162,35 +102,34 @@ function getNameBytes(name: string): number[] {
 export class ProdosFileEntry implements FileEntry {
 
   private volume: ProdosVolume
-  public data: Uint8Array
   public blockIndex: number
-  public offset: number       // offset within this.data block
+  private blockOffset: number     // offset within block (not this.data)
+  private data: Uint8Array
 
   protected _name?: string
   protected _type?: string
 
   constructor(volume: ProdosVolume, block: BlockData, offset: number) {
     this.volume = volume
-    this.data = block.data
     this.blockIndex = block.index
-    this.offset = offset
+    this.blockOffset = offset
+
+    this.data = block.data.subarray(offset, offset + 0x27)
 
     // TODO: add get/set for these as needed
 
-    // let creationDate = this.data[this.offset + 0x18] + (this.data[this.offset + 0x19] << 8)
-    // let creationTime = this.data[this.offset + 0x1A] + (this.data[this.offset + 0x1B] << 8)
+    // let creationDate = this.data[0x18] + (this.data[0x19] << 8)
+    // let creationTime = this.data[0x1A] + (this.data[0x1B] << 8)
     // this.creation = new ProdosDateTime(creationDate, creationTime)
-    // let lastModDate = this.data[this.offset + 0x21] + (this.data[this.offset + 0x22] << 8)
-    // let lastModTime = this.data[this.offset + 0x23] + (this.data[this.offset + 0x24] << 8)
+    // let lastModDate = this.data[0x21] + (this.data[0x22] << 8)
+    // let lastModTime = this.data[0x23] + (this.data[0x24] << 8)
     // this.lastMod = new ProdosDateTime(lastModDate, lastModTime)
   }
 
-  initialize(fileName: string, typeByte: ProdosFileType, auxType: number) {
+  initialize(fileName: string, typeByte: ProdosFileType, auxType: number): void {
 
     // default everything to zero
-    for (let i = 0; i < 0x27; i += 1) {
-      this.data[this.offset + i] = 0
-    }
+    this.data.fill(0)
 
     if (typeByte == ProdosFileType.DIR) {
       this.storageType = StorageType.Dir
@@ -207,9 +146,8 @@ export class ProdosFileEntry implements FileEntry {
   }
 
   public copyFrom(srcFile: ProdosFileEntry) {
-    for (let i = 0; i < 0x27; i += 1) {
-      this.data[this.offset + i] = srcFile.data[srcFile.offset + i]
-    }
+    this.data.set(srcFile.data)
+
     // caller must fix up headerPointer
     this.headerPointer = 0
   }
@@ -217,15 +155,23 @@ export class ProdosFileEntry implements FileEntry {
   // NOTE: caller needs to free blocks, unchain directories, etc.
   public markDeleted() {
     // NOTE: don't decrement blocksUsed -- leave entry intact
-    this.data[this.offset + 0x0] = 0x00
+    this.data[0x0] = 0x00
   }
 
-  public get name() {
+  public getEntryIndex(): number {
+    const entryIndex = (this.blockOffset - 0x04) / 0x27 + 1
+    if (entryIndex != Math.floor(entryIndex)) {
+      throw new Error(`Unexpected entryOffset of ${this.blockOffset}`)
+    }
+    return entryIndex
+  }
+
+  public get name(): string {
     if (!this._name) {
-      let nameLength = this.data[this.offset + 0x0] & 0xf
+      let nameLength = this.data[0x0] & 0xf
       let nameBytes = []
       for (let i = 0; i < nameLength; i += 1) {
-        nameBytes.push(this.data[this.offset + 0x1 + i])
+        nameBytes.push(this.data[0x1 + i])
       }
       this._name = String.fromCharCode(...nameBytes)
     }
@@ -234,15 +180,15 @@ export class ProdosFileEntry implements FileEntry {
 
   public set name(value: string) {
     const nameBytes = getNameBytes(value)
-    this.data[this.offset + 0x0] &= 0xF0
-    this.data[this.offset + 0x0] |= value.length
+    this.data[0x0] &= 0xF0
+    this.data[0x0] |= value.length
     for (let i = 0; i < nameBytes.length; i += 1) {
-      this.data[this.offset + 0x1 + i] = nameBytes[i]
+      this.data[0x1 + i] = nameBytes[i]
     }
     this._name = value
   }
 
-  public get type() {
+  public get type(): string {
     if (!this._type) {
       this._type = ProdosFileType[this.typeByte]
       if (!this._type) {
@@ -252,90 +198,90 @@ export class ProdosFileEntry implements FileEntry {
     return this._type
   }
 
-  public get typeByte() {
-    return this.data[this.offset + 0x10]
+  public get typeByte(): number {
+    return this.data[0x10]
   }
 
   private set typeByte(value: number) {
-    this.data[this.offset + 0x10] = value
+    this.data[0x10] = value
     this._type = undefined
   }
 
-  public get auxType() {
-    return this.data[this.offset + 0x1F] + (this.data[this.offset + 0x20] << 8)
+  public get auxType(): number {
+    return this.data[0x1F] + (this.data[0x20] << 8)
   }
 
   public set auxType(value: number) {
-    this.data[this.offset + 0x1F] = value & 0xff
-    this.data[this.offset + 0x20] = value >> 8
+    this.data[0x1F] = value & 0xff
+    this.data[0x20] = value >> 8
   }
 
-  public get storageType() {
-    return this.data[this.offset + 0x00] >> 4
+  public get storageType(): number {
+    return this.data[0x00] >> 4
   }
 
   public set storageType(value: number) {
-    this.data[this.offset + 0x00] = (value << 4) | (this.data[this.offset + 0x00] & 0x0F)
+    this.data[0x00] = (value << 4) | (this.data[0x00] & 0x0F)
   }
 
-  public get keyPointer() {
-    return this.data[this.offset + 0x11] + (this.data[this.offset + 0x12] << 8)
+  public get keyPointer(): number {
+    return this.data[0x11] + (this.data[0x12] << 8)
   }
 
   public set keyPointer(value: number) {
-    this.data[this.offset + 0x11] = value & 0xff
-    this.data[this.offset + 0x12] = value >> 8
+    this.data[0x11] = value & 0xff
+    this.data[0x12] = value >> 8
   }
 
-  public get blocksUsed() {
-    return this.data[this.offset + 0x13] + (this.data[this.offset + 0x14] << 8)
+  public get blocksUsed(): number {
+    return this.data[0x13] + (this.data[0x14] << 8)
   }
 
   public set blocksUsed(value: number) {
-    this.data[this.offset + 0x13] = value & 0xff
-    this.data[this.offset + 0x14] = value >> 8
+    this.data[0x13] = value & 0xff
+    this.data[0x14] = value >> 8
   }
 
-  public get eof() {
-    return this.data[this.offset + 0x15] + (this.data[this.offset + 0x16] << 8) + (this.data[this.offset + 0x17] << 16)
+  public get eof(): number {
+    return this.data[0x15] + (this.data[0x16] << 8) + (this.data[0x17] << 16)
   }
 
   public set eof(value: number) {
-    this.data[this.offset + 0x15] = value & 0xff
-    this.data[this.offset + 0x16] = (value >> 8) & 0xff
-    this.data[this.offset + 0x17] = value >> 16
+    this.data[0x15] = value & 0xff
+    this.data[0x16] = (value >> 8) & 0xff
+    this.data[0x17] = value >> 16
   }
 
-  public get version() {
-    return this.data[this.offset + 0x1C]
+  public get version(): number {
+    return this.data[0x1C]
   }
 
-  public get minVersion() {
-    return this.data[this.offset + 0x1D]
+  public get minVersion(): number {
+    return this.data[0x1D]
   }
 
-  public get access() {
-    return this.data[this.offset + 0x1E]
+  public get access(): number {
+    return this.data[0x1E]
   }
 
   private set access(value: number) {
-    this.data[this.offset + 0x1E] = value
+    this.data[0x1E] = value
   }
 
-  public get headerPointer() {
-    return this.data[this.offset + 0x25] + (this.data[this.offset + 0x26] << 8)
+  public get headerPointer(): number {
+    return this.data[0x25] + (this.data[0x26] << 8)
   }
 
   public set headerPointer(value: number) {
-    this.data[this.offset + 0x25] = value & 0xff
-    this.data[this.offset + 0x26] = value >> 8
+    this.data[0x25] = value & 0xff
+    this.data[0x26] = value >> 8
   }
 
   getContents(): Uint8Array {
     return this.volume.getFileContents(this)
   }
 
-  setContents(contents: Uint8Array) {
+  setContents(contents: Uint8Array): void {
     return this.volume.setFileContents(this, contents)
   }
 }
@@ -346,14 +292,14 @@ export class ProdosVolSubDir {
 
   private volume: ProdosVolume
   public keyPointer: number
-  public data: Uint8Array
+  private data: Uint8Array
 
   private _name?: string
 
   constructor(volume: ProdosVolume, block: BlockData) {
     this.volume = volume
     this.keyPointer = block.index
-    this.data = block.data
+    this.data = block.data.subarray(0x04, 0x04 + 0x27)
 
     const type = this.storageType
     if (type != 0 && type != StorageType.VolDir && type != StorageType.SubDir) {
@@ -362,13 +308,13 @@ export class ProdosVolSubDir {
 
     // TODO: add get/set for these as needed
 
-    // let creationDate = this.data[0x04 + 0x18] + (this.data[0x04 + 0x19] << 8)
-    // let creationTime = this.data[0x04 + 0x1A] + (this.data[0x04 + 0x1B] << 8)
+    // let creationDate = this.data[0x18] + (this.data[0x19] << 8)
+    // let creationTime = this.data[0x1A] + (this.data[0x1B] << 8)
     // this.creation = new ProdosDateTime(creationDate, creationTime)
   }
 
   // only used for sub-directories, not volume
-  public initialize(fileName: string, parentBlockIndex: number, entryIndex: number) {
+  public initialize(fileName: string, parentBlockIndex: number, entryIndex: number): void {
 
     this.data.fill(0)
     this.name = fileName
@@ -376,23 +322,23 @@ export class ProdosVolSubDir {
 
     this.access = 0xC3        // delete, rename, write, and read
 
-    this.data[0x04 + 0x1F] = 0x27         // entryLength
-    this.data[0x04 + 0x20] = 0x0D         // entriesPerBlock
+    this.data[0x1F] = 0x27         // entryLength
+    this.data[0x20] = 0x0D         // entriesPerBlock
 
     // set magic file typeByte for a sub-directory
-    this.data[0x04 + 0x10] = 0x75
+    this.data[0x10] = 0x75
 
     this.parentPointer = parentBlockIndex
-    this.data[0x04 + 0x25] = entryIndex   // parentEntry
-    this.data[0x04 + 0x26] = 0x27         // parentEntryLength
+    this.data[0x25] = entryIndex   // parentEntry
+    this.data[0x26] = 0x27         // parentEntryLength
   }
 
-  public get name() {
+  public get name(): string {
     if (!this._name) {
-      let nameLength = this.data[0x04 + 0x0] & 0xf
+      let nameLength = this.data[0x0] & 0xf
       let nameBytes = []
       for (let i = 0; i < nameLength; i += 1) {
-        nameBytes.push(this.data[0x04 + 0x1 + i])
+        nameBytes.push(this.data[0x1 + i])
       }
       this._name = String.fromCharCode(...nameBytes)
     }
@@ -401,102 +347,107 @@ export class ProdosVolSubDir {
 
   public set name(value: string) {
     const nameBytes = getNameBytes(value)
-    this.data[0x04 + 0x0] &= 0xF0
-    this.data[0x04 + 0x0] |= value.length
+    this.data[0x0] &= 0xF0
+    this.data[0x0] |= value.length
     for (let i = 0; i < nameBytes.length; i += 1) {
-      this.data[0x04 + 0x1 + i] = nameBytes[i]
+      this.data[0x1 + i] = nameBytes[i]
     }
     this._name = value
   }
 
-  public get storageType() {
-    return this.data[0x04 + 0x0] >> 4
+  public get storageType(): number {
+    return this.data[0x0] >> 4
   }
 
   public set storageType(value: number) {
-    this.data[0x04 + 0x00] = (value << 4) | (this.data[0x04 + 0x00] & 0x0F)
+    this.data[0x00] = (value << 4) | (this.data[0x00] & 0x0F)
   }
 
-  public get version() {
-    return this.data[0x04 + 0x1C]
+  // magic value that's normally 0x75 or 0x76
+  public get specialType(): number {
+    return this.data[0x10]
   }
 
-  public get minVersion() {
-    return this.data[0x04 + 0x1D]
+  public get version(): number {
+    return this.data[0x1C]
   }
 
-  public get access() {
-    return this.data[0x04 + 0x1E]
+  public get minVersion(): number {
+    return this.data[0x1D]
+  }
+
+  public get access(): number {
+    return this.data[0x1E]
   }
 
   private set access(value: number) {
-    this.data[0x04 + 0x1E] = value
+    this.data[0x1E] = value
   }
 
-  public get entryLength() {
-    return this.data[0x04 + 0x1F]
+  public get entryLength(): number {
+    return this.data[0x1F]
   }
 
-  public get entriesPerBlock() {
-    return this.data[0x04 + 0x20]
+  public get entriesPerBlock(): number {
+    return this.data[0x20]
   }
 
-  public get fileCount() {
-    return this.data[0x04 + 0x21]
+  public get fileCount(): number {
+    return this.data[0x21]
   }
 
   public set fileCount(value: number) {
-    this.data[0x04 + 0x21] = value
+    this.data[0x21] = value
   }
 
   public get parentPointer(): number {
     if (this.storageType != StorageType.SubDir) {
       throw new Error("Invalid operation: parentPointer not valid in volDir")
     }
-    return this.data[0x04 + 0x23] + (this.data[0x04 + 0x24] << 8)
+    return this.data[0x23] + (this.data[0x24] << 8)
   }
 
   public set parentPointer(value: number) {
     if (this.storageType != StorageType.SubDir) {
       throw new Error("Invalid operation: parentPointer not valid in volDir")
     }
-    this.data[0x04 + 0x23] = value & 0xff
-    this.data[0x04 + 0x24] = value >> 8
+    this.data[0x23] = value & 0xff
+    this.data[0x24] = value >> 8
   }
 
   public get parentEntry(): number {
     if (this.storageType != StorageType.SubDir) {
       throw new Error("Invalid operation: parentEntry not valid in volDir")
     }
-    return this.data[0x04 + 0x25]
+    return this.data[0x25]
   }
 
   public set parentEntry(value: number) {
     if (this.storageType != StorageType.SubDir) {
       throw new Error("Invalid operation: parentEntry not valid in volDir")
     }
-    this.data[0x04 + 0x25] = value
+    this.data[0x25] = value
   }
 
   public get parentEntryLength(): number {
     if (this.storageType != StorageType.SubDir) {
       throw new Error("Invalid operation: parentEntryLength not valid in volDir")
     }
-    return this.data[0x04 + 0x26]
+    return this.data[0x26]
   }
 
-  public get bitmapPointer() {
+  public get bitmapPointer(): number {
     if (this.storageType != StorageType.VolDir) {
       throw new Error("Invalid operation: bitmapPointer not valid in subDir")
     }
-    return this.data[0x04 + 0x23] + (this.data[0x04 + 0x24] << 8)
+    return this.data[0x23] + (this.data[0x24] << 8)
   }
 
-  public get totalBlocks() {
+  public get totalBlocks(): number {
     if (this.storageType != StorageType.VolDir) {
       throw new Error("Invalid operation: totalBlocks not valid in subDir")
     }
-    return this.data[0x04 + 0x25] + (this.data[0x04 + 0x26] << 8)
+    return this.data[0x25] + (this.data[0x26] << 8)
   }
 }
 
@@ -506,7 +457,7 @@ export class ProdosVolSubDir {
 // *** redo this using initialize()? ***
 export class ProdosVolFileEntry extends ProdosFileEntry {
   constructor(volume: ProdosVolume, block: BlockData) {
-    super(volume, block, -1)
+    super(volume, block, 0)
     this.keyPointer = block.index
     // TODO: should name come from volume?
     this._name = ""
@@ -520,8 +471,8 @@ export class ProdosVolume {
   readonly volumeHeaderBlock = 2
   protected image: DiskImage
   private totalBlocks: number
+  private bitmapPointer: number
   private bitmapBlocks: number
-  protected volSubDir: ProdosVolSubDir    // *** don't keep around?
   public volFileEntry: ProdosFileEntry
 
   constructor(image: DiskImage) {
@@ -532,16 +483,19 @@ export class ProdosVolume {
     // *** share this code ***
 
     let block = this.readBlock(this.volumeHeaderBlock)
-    this.volSubDir = new ProdosVolSubDir(this, block)
-    // *** maybe just pull out interesting fields? ***
+    const volSubDir = new ProdosVolSubDir(this, block)
+    if (volSubDir.totalBlocks != this.totalBlocks) {
+      throw new Error(`Image size ${this.totalBlocks} doesn't match totalBlocks ${volSubDir.totalBlocks} in header`)
+    }
+    this.bitmapPointer = volSubDir.bitmapPointer
 
     // fake block for creating volFileEntry
     block = { index: this.volumeHeaderBlock, data: new Uint8Array(this.blockSize) }
     this.volFileEntry = new ProdosVolFileEntry(this, block)
   }
 
-  public format(volumeName: string) {
-    this.resetChanges()
+  public format(volumeName: string): void {
+    this.revertChanges()
     const blockCount = this.image.getBlockCount()
     if (blockCount > 65535) {
       throw new Error("Maximum block count of 65535 exceeded")
@@ -632,25 +586,47 @@ export class ProdosVolume {
       }
     }
 
-    // rebuild volumeDirEntry
-    block = this.readBlock(this.volumeHeaderBlock)
-    this.volSubDir = new ProdosVolSubDir(this, block)
-    // *** maybe just pull out interesting fields? ***
+    this.totalBlocks = blockCount
+    this.bitmapPointer = 6
   }
 
-  private clearBit(bit: number, bytes: Uint8Array) {
+  private clearBit(bit: number, bytes: Uint8Array): void {
     bytes[bit >> 3] &= ~(0x80 >> (bit & 7))
   }
 
-  public commitChanges() {
+  public commitChanges(): void {
     this.image.commitChanges()
   }
 
-  public resetChanges() {
-    this.image.resetChanges()
+  public revertChanges(): void {
+    this.image.revertChanges()
   }
 
-  public deleteFile(parent: FileEntry, file: FileEntry, recurse: boolean) {
+  public verify(): void {
+  }
+
+  public preprocessName(name: string): string {
+    if (name.length > 15) {
+      const n = name.lastIndexOf(".")
+      if (n > 0) {
+        let suffix = name.substring(n)
+        // special case .PIC suffix in DOS 3.3
+        if (suffix == ".PIC") {
+          if (n <= 15) {
+            return name.substring(0, n)
+          }
+          suffix = ""
+        }
+        const base = name.substring(0, Math.min(14 - suffix.length, n))
+        name = base + "~" + suffix
+      } else {
+        name = name.substring(0, 14) + "~"
+      }
+    }
+    return name
+  }
+
+  public deleteFile(parent: FileEntry, file: FileEntry, recurse: boolean): void {
     if (file.type == "DIR") {
       if (!recurse) {
         const parentSubDir = this.getSubDir(parent)
@@ -662,7 +638,7 @@ export class ProdosVolume {
     this.freeFileEntry(parent as ProdosFileEntry, file as ProdosFileEntry)
   }
 
-  private freeFileEntry(parent: ProdosFileEntry, file: ProdosFileEntry) {
+  private freeFileEntry(parent: ProdosFileEntry, file: ProdosFileEntry): void {
     if (file.type == "DIR") {
       // delete all child files
       this.forEachAllocatedFile(file, (child: FileEntry) => {
@@ -688,9 +664,11 @@ export class ProdosVolume {
     const parentSubDir = this.getSubDir(parent)
     parentSubDir.fileCount -= 1
     // TODO: update modification date in parentSubDir
+
+    // TODO: should subDir be scanned for/pruned of empty blocks?
   }
 
-  public renameFile(parent: FileEntry, file: FileEntry, newName: string) {
+  public renameFile(parent: FileEntry, file: FileEntry, newName: string): void {
     const fileEntry = <ProdosFileEntry>file
 
     if (parent.type != "DIR") {
@@ -716,7 +694,24 @@ export class ProdosVolume {
     }
   }
 
-  public moveFile(file: FileEntry, dstDir: FileEntry) {
+  // NOTE: This does not check for the case of a folder being copied into itself.
+  //  VSCode catches that case externally.  Would need to add a check here if ever
+  //  operating outside VSCode extension.
+  public copyDir(dstParentDir: ProdosFileEntry, srcVolume: ProdosVolume, srcDir: ProdosFileEntry) {
+    const dstDir = <ProdosFileEntry>this.createFile(dstParentDir, srcDir.name, ProdosFileType.DIR, 0x0000)
+    srcVolume.forEachAllocatedFile(srcDir, (fileEntry: ProdosFileEntry) => {
+      if (fileEntry.type == "DIR") {
+        this.copyDir(dstDir, srcVolume, fileEntry)
+      } else {
+        const dstFile = this.createFile(dstDir, fileEntry.name, fileEntry.typeByte, fileEntry.auxType)
+        const srcContents = fileEntry.getContents()
+        dstFile.setContents(srcContents)
+      }
+      return true
+    })
+  }
+
+  public moveFile(file: FileEntry, dstDir: FileEntry): void {
     const srcFile = <ProdosFileEntry>file
 
     if (dstDir.type != "DIR") {
@@ -731,22 +726,22 @@ export class ProdosVolume {
 
     const dstFile = this.allocFileEntry(<ProdosFileEntry>dstDir)
     dstFile.copyFrom(srcFile)
+    dstFile.headerPointer = (<ProdosFileEntry>dstDir).keyPointer
 
     if (dstFile.type == "DIR") {
       // relink volSubDir back to new fileEntry
       let block = this.readBlock(dstFile.keyPointer)
       let volSubDir = new ProdosVolSubDir(this, block)
       volSubDir.parentPointer = dstFile.blockIndex
-
-      // *** common code ***
-      const entryIndex = (dstFile.offset - 0x04) / 0x27 + 1
-      if (entryIndex != Math.floor(entryIndex)) {
-        throw new Error(`Unexpected entryOffset of ${dstFile.offset}`)
-      }
-
-      volSubDir.parentEntry = entryIndex
+      volSubDir.parentEntry = dstFile.getEntryIndex()
       dstFile.headerPointer = (<ProdosFileEntry>dstDir).keyPointer
     }
+
+    // decrement file count in srcFile parent subDir
+    // TODO: update modification date in srcSubDir
+    const block = this.readBlock(srcFile.headerPointer)
+    const srcSubDir = new ProdosVolSubDir(this, block)
+    srcSubDir.fileCount -= 1
 
     // clear file entry in its source location
     srcFile.markDeleted()
@@ -877,10 +872,7 @@ export class ProdosVolume {
 
     if (type == ProdosFileType.DIR) {
       const subDir = new ProdosVolSubDir(this, keyBlock)
-      const entryIndex = (fileEntry.offset - 0x04) / 0x27 + 1
-      if (entryIndex != Math.floor(entryIndex)) {
-        throw new Error(`Unexpected entryOffset of ${fileEntry.offset}`)
-      }
+      const entryIndex = fileEntry.getEntryIndex()
       subDir.initialize(fileName, fileEntry.blockIndex, entryIndex)
     }
 
@@ -898,6 +890,8 @@ export class ProdosVolume {
 
     let entryOffset = 4 + 0x27
     let fileIndex = 0
+    // copy this before it gets modified by a delete
+    const fileCount = volSubDir.fileCount
     while (true) {
       while (entryOffset + volSubDir.entryLength <= curBlock.data.length) {
         if (curBlock.data[entryOffset + 0x00] != 0x00) {
@@ -906,13 +900,13 @@ export class ProdosVolume {
             return true
           }
           fileIndex += 1
-          if (fileIndex >= volSubDir.fileCount) {
+          if (fileIndex >= fileCount) {
             break
           }
         }
         entryOffset += volSubDir.entryLength
       }
-      if (fileIndex >= volSubDir.fileCount) {
+      if (fileIndex >= fileCount) {
         break
       }
       const nextBlockIndex = curBlock.data[0x2] + (curBlock.data[0x3] << 8)
@@ -944,7 +938,7 @@ export class ProdosVolume {
     return fileData
   }
 
-  private readEachFileBlock(fileEntry: ProdosFileEntry, dataProc: ProdosDataProc) {
+  private readEachFileBlock(fileEntry: ProdosFileEntry, dataProc: ProdosDataProc): void {
     let keyBlock = this.readBlock(fileEntry.keyPointer)
     let length = fileEntry.eof
     let fileOffset = 0
@@ -1007,7 +1001,7 @@ export class ProdosVolume {
     }
   }
 
-  public setFileContents(entry: FileEntry, contents: Uint8Array) {
+  public setFileContents(entry: FileEntry, contents: Uint8Array): void {
     let fileEntry = entry as ProdosFileEntry
     this.writeEachFileSector(fileEntry, (block: BlockData, fileOffset: number): boolean => {
       let copySize = Math.min(block.data.length, contents.length - fileOffset)
@@ -1015,12 +1009,10 @@ export class ProdosVolume {
       block.data.set(contents.subarray(fileOffset, fileOffset + copySize))
       return fileOffset + copySize < contents.length
     })
-    // *** now commit all fileEntry changes, on success ***
     fileEntry.eof = contents.length
   }
 
-  // *** reconsider not modifying fileEntry until success ***
-  private writeEachFileSector(fileEntry: ProdosFileEntry, dataProc: ProdosDataProc) {
+  private writeEachFileSector(fileEntry: ProdosFileEntry, dataProc: ProdosDataProc): void {
     let moreData = true
     let fileOffset = 0
     let masterIndexBlock: BlockData | undefined
@@ -1206,7 +1198,7 @@ export class ProdosVolume {
   private allocateBlock(): BlockData {
     let index = 0
     for (let blockIndex = 0; blockIndex < this.bitmapBlocks; blockIndex += 1) {
-      const bitBlockIndex = this.volSubDir.bitmapPointer + blockIndex
+      const bitBlockIndex = this.bitmapPointer + blockIndex
       const block = this.readBlock(bitBlockIndex)
       for (let i = 0; i < this.blockSize; i += 1) {
         if (block.data[i] == 0) {
@@ -1215,8 +1207,8 @@ export class ProdosVolume {
         }
         let mask = 0x80
         for (let j = 0; j < 8; j += 1) {
-          if (index >= this.volSubDir.totalBlocks) {
-            throw new Error("Disk full")
+          if (index >= this.totalBlocks) {
+            throw new DiskFullError()
           }
           if (block.data[i] & mask) {
             block.data[i] &= ~mask
@@ -1229,10 +1221,10 @@ export class ProdosVolume {
         }
       }
     }
-    throw new Error("Disk full")
+    throw new DiskFullError()
   }
 
-  public freeBlock(index: number) {
+  public freeBlock(index: number): void {
     if (index >= this.totalBlocks) {
       throw new Error(`freeBlock of ${index} out of range`)
     }
@@ -1244,7 +1236,7 @@ export class ProdosVolume {
     const byteIndex = (index >> 3) & 0x1FF
     const bitIndex = (index & 7)
 
-    const bitBlockIndex = this.volSubDir.bitmapPointer + blockIndex
+    const bitBlockIndex = this.bitmapPointer + blockIndex
     const blockData = this.readBlock(bitBlockIndex)
     blockData.data[byteIndex] |= 0x80 >> bitIndex
   }
@@ -1253,7 +1245,7 @@ export class ProdosVolume {
     if (index == 0) {
       throw new Error(`Reading block 0 not allowed`)
     }
-    const block = { index, data: this.image.readBlock(index) }
+    const block = this.image.readBlock(index)
     if (!block.data) {
       throw new Error(`Failed to read block ${index}`)
     }

@@ -145,10 +145,8 @@ export interface SlotDevice extends Bus {
 
 //------------------------------------------------------------------------------
 
-export interface IUndoHooks {
+export interface IHostHooks {
   capturedUndo(index: number): void
-  didUndo(index: number): void
-  didRedo(index: number): void
 }
 
 //------------------------------------------------------------------------------

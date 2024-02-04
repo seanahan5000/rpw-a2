@@ -1,7 +1,7 @@
 
 import { Point, Rect } from "./shared"
 import { IMachineDisplay, Joystick } from "./shared"
-import { IUndoHooks } from "./shared"
+import { IHostHooks } from "./shared"
 import { HiresTable } from "./shared"
 import { Tool, getModifierKeys } from "./display"
 import { ZoomHiresDisplay } from "./display"
@@ -16,7 +16,7 @@ function tippy(a: string, b: any) {}
 
 // TODO: what about these?
 // import "@vscode/codicons/dist/codicon.css"
-// import "./display_view.css"
+import "./display_view.css"
 
 enum DisplaySource {
   ACTIVE    = 0,
@@ -87,6 +87,7 @@ export class DisplayView {
   private hiresDisplay: ZoomHiresDisplay
   private displaySource: DisplaySource
   private projectName?: string
+  private hostHooks?: IHostHooks
 
   private hasFocus = false
   private isEditing = false
@@ -105,7 +106,7 @@ export class DisplayView {
 
   private foreColorIndex = 3
 
-  constructor(parent: HTMLElement, undoHooks?: IUndoHooks, machineDisplay?: IMachineDisplay, project?: Project) {
+  constructor(parent: HTMLElement, machineDisplay: IMachineDisplay, project?: Project) {
 
     this.machineDisplay = machineDisplay
     this.project = project
@@ -129,7 +130,7 @@ export class DisplayView {
 
     this.displayDiv = <HTMLDivElement>this.displayGrid.querySelector("#display-div")
     this.hiresCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#hires-canvas")
-    this.hiresDisplay = new ZoomHiresDisplay(this.hiresCanvas, undoHooks, machineDisplay)
+    this.hiresDisplay = new ZoomHiresDisplay(this.hiresCanvas, machineDisplay)
 
     this.toolPalette = <HTMLDivElement>this.displayGrid.querySelector("#tool-palette")
     this.colorPalette = <HTMLDivElement>this.displayGrid.querySelector("#color-palette")
@@ -159,6 +160,10 @@ export class DisplayView {
     }
 
     tippy('#screen-edit', { content: 'Edit Screen (\u2318E)' })
+
+    this.hiresDisplay.onToolChanged = (toolIndex: Tool) => {
+      this.onToolChanged(toolIndex)
+    }
 
     this.hiresDisplay.onToolRectChanged = (toolRect: Rect) => {
       this.onToolRectChanged(toolRect)
@@ -190,6 +195,14 @@ export class DisplayView {
         let element: HTMLElement = document.activeElement as HTMLElement
         if (element && element.onpaste) {
           element.onpaste(e)
+        }
+      }
+    }
+
+    document.onselectstart = (e: Event) => {
+      if (document.activeElement == this.hiresCanvas) {
+        if (this.isEditing) {
+          this.hiresDisplay.selectAll(false)
         }
       }
     }
@@ -341,34 +354,42 @@ export class DisplayView {
 
       if (e.metaKey) {
         if (curKey == "x") {
-          this.hiresDisplay.cutSelection(e.shiftKey)
-          // TODO: possibly update cursor
-          e.preventDefault()
+          if (!this.hostHooks) {
+            this.hiresDisplay.cutSelection(e.shiftKey)
+            e.preventDefault()
+          }
         } else if (curKey == "c") {
-          this.hiresDisplay.copySelection(e.shiftKey)
-          e.preventDefault()
+          if (!this.hostHooks) {
+            this.hiresDisplay.copySelection(e.shiftKey)
+            e.preventDefault()
+          }
         } else if (curKey == "v") {
           if (e.shiftKey) {
             this.hiresDisplay.flipSelection(false, true)
+            e.preventDefault()
           } else {
-            navigator.clipboard.readText().then(clipText => {
-              if (this.isEditing) {
-                this.hiresDisplay.pasteSelection(clipText, this.mousePt)
-              }
-            })
-            // TODO: possibly update cursor
+            if (!this.hostHooks) {
+              navigator.clipboard.readText().then(clipText => {
+                if (this.isEditing) {
+                  this.hiresDisplay.pasteSelection(clipText, this.mousePt)
+                }
+              })
+            }
+            e.preventDefault()
           }
-          e.preventDefault()
         } else if (curKey === "a") {
+          // NOTE: do this even if hostHooks is present
           this.hiresDisplay.selectAll(e.ctrlKey)
           e.preventDefault()
         } else if (curKey === "z") {
-          if (e.shiftKey) {
-            this.hiresDisplay.redo()
-          } else {
-            this.hiresDisplay.undo()
+          if (!this.hostHooks) {
+            if (e.shiftKey) {
+              this.hiresDisplay.redo()
+            } else {
+              this.hiresDisplay.undo()
+            }
+            e.preventDefault()
           }
-          e.preventDefault()
         } else if (curKey == "h") {
           if (e.shiftKey) {
             this.hiresDisplay.flipSelection(true, false)
@@ -519,17 +540,21 @@ export class DisplayView {
 
     this.hiresCanvas.onpointermove = (e: PointerEvent) => {
       let canvasPt = this.canvasFromClient(e)
-      if (canvasPt.x >= 0 && canvasPt.y >= 0) {
-        this.lastMousePt = this.mousePt
-        this.mousePt = canvasPt
-        if (this.isEditing) {
-          if (this.leftButtonIsDown) {
-            this.hiresDisplay.toolMove(this.mousePt, getModifierKeys(e))
-          }
-        } else {
-          if (this.hasFocus) {
-            this.updateJoystick()
-          }
+      if (canvasPt.x < 0) {
+        canvasPt.x = 0
+      }
+      if (canvasPt.y < 0) {
+        canvasPt.y = 0
+      }
+      this.lastMousePt = this.mousePt
+      this.mousePt = canvasPt
+      if (this.isEditing) {
+        if (this.leftButtonIsDown) {
+          this.hiresDisplay.toolMove(this.mousePt, getModifierKeys(e))
+        }
+      } else {
+        if (this.hasFocus) {
+          this.updateJoystick()
         }
       }
     }
@@ -623,6 +648,23 @@ export class DisplayView {
     this.setForeColor(1)
   }
 
+  public setHostHooks(hostHooks: IHostHooks) {
+    this.hostHooks = hostHooks
+    this.hiresDisplay.setHostHooks(hostHooks)
+  }
+
+  public undo() {
+    this.hiresDisplay.undo()
+  }
+
+  public redo() {
+    this.hiresDisplay.redo()
+  }
+
+  public revertUndo(index: number) {
+    this.hiresDisplay.revertUndo(index)
+  }
+
   private canvasFromClient(e: PointerEvent): Point {
     let canvas = <HTMLCanvasElement>e.target
     let rect = canvas.getBoundingClientRect()
@@ -700,17 +742,25 @@ export class DisplayView {
   }
 
   private setTool(toolIndex: Tool) {
+    this.hiresDisplay.setTool(toolIndex)
+  }
+
+  private onToolChanged(toolIndex: Tool) {
     for (let i = 0; i < 8; i += 1) {
       let toolButton = <HTMLButtonElement>this.toolPalette.querySelector("#tool" + i)
       if (toolButton == undefined) {
         break
       }
-      toolButton.className = "tool-btn" + (i == toolIndex ? " active" : "")
+      if (i == toolIndex) {
+        toolButton.classList.add("active")
+      } else {
+        toolButton.classList.remove("active")
+      }
     }
-    this.hiresDisplay.setTool(toolIndex)
 
     // TODO: set different cursor for each tool type
-    if (toolIndex == Tool.Select) {
+    // TODO: should this be in this.hiresDisplay instead?
+    if (toolIndex == Tool.Select || toolIndex == Tool.FillRect || toolIndex == Tool.FrameRect) {
       this.hiresCanvas.style.cursor = "crosshair"
     } else {
       this.hiresCanvas.style.cursor = "default"

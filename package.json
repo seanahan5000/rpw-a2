@@ -22,6 +22,9 @@
 		"workspaceContains:**/*.po",
 		"onLanguage:po",
 		"onFileSystem:po",
+		"workspaceContains:**/*.hdv",
+		"onLanguage:hdv",
+		"onFileSystem:hdv",
 		"workspaceContains:**/*.2mg",
 		"onLanguage:2mg",
 		"onFileSystem:2mg"
@@ -45,6 +48,12 @@
 				"id": "po",
 				"extensions": [
 					".po"
+				]
+			},
+			{
+				"id": "hdv",
+				"extensions": [
+					".hdv"
 				]
 			},
 			{
@@ -95,7 +104,7 @@
 		"menus": {
 			"explorer/context": [
 				{
-					"when": "resourceLangId == dsk || resourceLangId == do || resourceLangId == po || resourceLangId == 2mg",
+					"when": "resourceLangId == dsk || resourceLangId == do || resourceLangId == po || resourceLangId == hdv || resourceLangId == 2mg",
 					"command": "extension.mountApple2FileSystem",
 					"group": "navigation"
 				}

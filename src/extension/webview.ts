@@ -1,12 +1,12 @@
 
 import { DisplayView } from "../display_view"
 import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
-import { HiresFrame, HiresTable, IMachineDisplay, IUndoHooks } from "../shared"
+import { HiresFrame, HiresTable, IMachineDisplay, IHostHooks } from "../shared"
 
 // @ts-ignore
 const vscode = acquireVsCodeApi()
 
-class Webview implements IMachineDisplay, IUndoHooks {
+class Webview implements IMachineDisplay, IHostHooks {
 
   // in hires display order, 0x1FF8 to 0x2000 in size
   private frameData?: Uint8Array
@@ -31,7 +31,8 @@ class Webview implements IMachineDisplay, IUndoHooks {
           // TODO: what about extra data? read-only?
           // TODO: support new/untitled document?
           this.frameData = dataBytes
-          this.displayView = new DisplayView(topDiv, this, this)
+          this.displayView = new DisplayView(topDiv, this)
+          this.displayView.setHostHooks(this)
           this.displayView.update(false)
           //*** look at body.editable flag ***
         } else if (body.type == "BAS") {
@@ -48,35 +49,31 @@ class Webview implements IMachineDisplay, IUndoHooks {
         break
       }
 
-      // *** called on redo? ***
       case "update": {
-        console.log("update") // ***
-        // const strokes = body.edits.map(edit => new Stroke(edit.color, edit.stroke))
-        // await editor.reset(body.content, strokes)
+        if (body.editType == "undo") {
+          this.displayView?.undo()
+        } else if (body.editType == "redo") {
+          this.displayView?.redo()
+        } else if (body.editType == "revert") {
+          this.frameData = body.contents
+          this.displayView?.revertUndo(body.editIndex)
+        }
         break
       }
 
       case "getFileData": {
         if (this.displayView && this.frameData) {
-          vscode.postMessage({ type: 'response', requestId, body: Array.from(this.frameData) })
+          vscode.postMessage({ type: "response", requestId, body: Array.from(this.frameData) })
         }
         break
       }
     }
   }
 
-  // IUndoHooks implementation
+  // IHostHooks implementation
 
   capturedUndo(index: number) {
-    vscode.postMessage({
-      type: 'stroke'      // ***
-    })
-  }
-
-  didUndo(index: number) {
-  }
-
-  didRedo(index: number) {
+    vscode.postMessage({ type: "edit", body: { index: index }})
   }
 
   // IMachineDisplay implementation
@@ -121,4 +118,4 @@ class Webview implements IMachineDisplay, IUndoHooks {
 }
 
 const webview = new Webview()
-vscode.postMessage({ type: 'ready' })
+vscode.postMessage({ type: "ready" })

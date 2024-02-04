@@ -17,6 +17,7 @@
   grid-auto-columns: 0px 564px;
   row-gap: 0px;
   column-gap: 0px;
+  user-select: none;
 }
 
 #display-grid.editing {

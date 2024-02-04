@@ -1,5 +1,6 @@
 
-import { DiskImage, StorageType, BlockData } from "./prodos"
+import { DiskImage, BlockData } from "./disk_image"
+import { StorageType } from "./prodos"
 import { ProdosVolume, ProdosFileEntry, ProdosVolSubDir, ProdosFileType } from "./prodos"
 
 enum BlockState {
@@ -8,17 +9,25 @@ enum BlockState {
   REFED = 2
 }
 
-export class TestProdosVolume extends ProdosVolume {
+export class VerifiedProdosVolume extends ProdosVolume {
 
   private blockStates: BlockState[] = []
 
   constructor(image: DiskImage) {
     super(image)
+    // *** verify on construct? ***
   }
 
   public commitChanges(): void {
-    super.commitChanges()
     this.verify()
+    super.commitChanges()
+  }
+
+  public revertChanges(): void {
+    super.revertChanges()
+    // *** this will become excessive ***
+    this.verify()
+    super.revertChanges()
   }
 
   public verify() {
@@ -30,7 +39,6 @@ export class TestProdosVolume extends ProdosVolume {
   }
 
   private verifyVolume() {
-    // *** progress
 
     // NOTE: will be referenced in verifyVolSubDir
     const volBlock = this.readBlock(2)
@@ -110,13 +118,13 @@ export class TestProdosVolume extends ProdosVolume {
 
     if (storageType == StorageType.SubDir && dirEntry) {
 
-      this.check(subDir.data[0x14] == 0x75,
-        `SubDir magic value of 0x75 expected at data[0x14], got 0x${subDir.data[0x14].toString(16)}`)
+      this.check(subDir.specialType == 0x75 || subDir.specialType == 0x76,
+        `SubDir magic value of 0x75 expected at data[0x14], got 0x${subDir.specialType.toString(16)}`)
 
       this.check(subDir.parentPointer == dirEntry.blockIndex,
         `Bad dir.parentPointer: expected ${subDir.parentPointer}, saw ${dirEntry.blockIndex}`)
 
-      const entryIndex = (dirEntry.offset - 0x04) / 0x27 + 1
+      const entryIndex = dirEntry.getEntryIndex()
       this.check(subDir.parentEntry == entryIndex,
         `Bad dir.parentEntry: expected ${subDir.parentEntry}, saw ${entryIndex}`)
 
@@ -137,6 +145,7 @@ export class TestProdosVolume extends ProdosVolume {
       while (entryOffset + 0x27 <= curBlock.data.length) {
         if (curBlock.data[entryOffset + 0x00] != 0x00) {
           // *** progress?
+          // *** validate all name characters ***
           const fileEntry = new ProdosFileEntry(this, curBlock, entryOffset)
           this.verifyFileDir(subDir, fileEntry)
           fileCount += 1
@@ -172,7 +181,7 @@ export class TestProdosVolume extends ProdosVolume {
     // ignore file.version
     this.check(file.minVersion == 0x00,
       `Unsupported minVersion ${file.minVersion}`)
-    this.check((file.access & 0x1C) == 0x00,
+    this.check((file.access & 0x18) == 0x00,
       `Unsupported access value 0x${file.access.toString(16)}`)
     this.check(file.headerPointer == parentSubDir.keyPointer,
       `Bad file to parent link: expected ${parentSubDir.keyPointer}, saw ${file.headerPointer}`)
@@ -298,13 +307,16 @@ export class TestProdosVolume extends ProdosVolume {
 }
 
 
+
+// *** test making many files and directories and then deleting them
+
 function testProdos() {
 
   // *** iterate through volume sizes to catch all bitmap sizes ***
   // *** test larger jumps up/down in size ***
 
-  const diskImage = new DiskImage(new Uint8Array(0x1FFFE00), false)
-  const volume = new TestProdosVolume(diskImage)
+  const diskImage = new DiskImage("hdv", new Uint8Array(0x1FFFE00), false)
+  const volume = new VerifiedProdosVolume(diskImage)
   volume.format("TEST_VOLUME")
   volume.commitChanges()
 
@@ -375,3 +387,18 @@ function testProdos() {
 
 // *** TESTING: create files and dirs using Prodos, compare result against this
   // *** start with same empty .po image in both cases
+
+// *** stress test creating/deleting/moving files and directories
+
+
+// *** dragging ALIENS folder from TFDEMO.PO to empty TEST.PO fails
+
+// *** dragging long file name file from DOS 3.3 to Prodos leaves stub file
+
+// *** dragging AUTOMATION.PIC 3.3 -> Prodos leaves file that doesn't open
+
+// *** create directory at volume root still has problems -- shows up in other volumes ***
+
+// *** prune directory block after all files in it are deleted
+
+// *** test that iterates through every file in Asimov archive

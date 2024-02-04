@@ -9,6 +9,6 @@
 
 * Sparse files are not supported
 
-#### Dos 3.3
+#### DOS 3.3
 
 * Non-sequential text files are not supported
