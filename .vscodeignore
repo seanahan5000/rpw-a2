@@ -1,6 +1,11 @@
 .vscode/**
+node_modules/**
 src/**
 **/*.map
 .gitignore
 tsconfig.json
 webpack.config.js
+**/*.ts
+**/*.map
+.DS_Store
+*.vsix

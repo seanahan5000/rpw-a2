@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as vscode from 'vscode'
 import * as path from 'path'
-import { DiskImage } from "../filesys/disk_image"
+import { DiskImage, TwoMGHeader } from "../filesys/disk_image"
 import { FileEntry, ProdosVolume, ProdosFileType, ProdosFileEntry } from "../filesys/prodos"
 import { Dos33Volume } from '../filesys/dos33'
 
@@ -18,15 +18,8 @@ class FileDiskImage extends DiskImage {
 
   private path: string
 
-  constructor(volumeUri: vscode.Uri, readOnly = false) {
-    const path = volumeUri.path
-    const n = path.lastIndexOf(".")
-    if (n < 0) {
-      throw vscode.FileSystemError.FileNotFound(volumeUri)
-    }
-    const ext = path.slice(n + 1).toLowerCase()
-    const diskData = fs.readFileSync(path)
-    super(ext, diskData, readOnly)
+  constructor(path: string, ext: string, data: Uint8Array, readOnly = false) {
+    super(ext, data, readOnly)
     this.path = path
   }
 
@@ -38,6 +31,70 @@ class FileDiskImage extends DiskImage {
       }
     }
   }
+}
+
+//------------------------------------------------------------------------------
+
+function createVolume(volumeUri: vscode.Uri, isReadOnly: boolean): Volume {
+
+  // *** make this a setting ***
+  let verifiedVolume = true
+
+  const pathName = volumeUri.path
+  let volumeName = path.posix.basename(volumeUri.path)
+  const n = pathName.lastIndexOf(".")
+  if (n < 0) {
+    throw vscode.FileSystemError.FileNotFound(volumeUri)
+  }
+  const ext = pathName.slice(n + 1).toLowerCase()
+  volumeName = pathName.slice(0, n)
+  let reformat = false
+  let diskData: Uint8Array
+
+  diskData = fs.readFileSync(pathName)
+  if (diskData.length == 0) {
+    let newSize = 0
+    // TODO: add settings for default sizes?
+    if (ext == "dsk" || ext == "do") {
+      newSize = 143360
+    } else if (ext == "po") {
+      newSize = 0xC8000         // 800K floppy
+    } else if (ext == "2mg") {
+      newSize = 0x168000 + 64   // 1.2M floppy
+    } else if (ext == "hdv") {
+      newSize = 0x1FFFE00       // 32M hard disk
+    } else {
+      throw new Error(`Unknown disk volume type "${ext}"`)
+    }
+    diskData = new Uint8Array(newSize)
+    if (ext == "2mg") {
+      const tmg = new TwoMGHeader(diskData)
+      tmg.format()
+    }
+    reformat = true
+  }
+
+  let volume: Volume
+  const diskImage = new FileDiskImage(pathName, ext, diskData, isReadOnly)
+  if (diskImage.isDos33) {
+    if (verifiedVolume) {
+      volume = new VerifiedDos33Volume(diskImage, reformat)
+    } else {
+      volume = new Dos33Volume(diskImage, reformat)
+    }
+  } else {
+    if (verifiedVolume) {
+      volume = new VerifiedProdosVolume(diskImage, reformat)
+    } else {
+      volume = new ProdosVolume(diskImage, reformat)
+    }
+  }
+
+  // TODO: after reformat, add UNTITLED.PIC file?
+
+  volume.verify()
+  // TODO: is if verify fails, force image to readOnly?
+  return volume
 }
 
 //------------------------------------------------------------------------------
@@ -75,18 +132,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       if (!volume) {
         // TODO: get readOnly state from actual file?
         const isReadOnly = false
-        const diskImage = new FileDiskImage(volumeUri, isReadOnly)
-        if (diskImage.isDos33) {
-          // *** make this a setting ***
-          // volume = new Dos33Volume(diskImage)
-          volume = new VerifiedDos33Volume(diskImage)
-        } else {
-          // *** make this a setting ***
-          // volume = new ProdosVolume(diskImage)
-          volume = new VerifiedProdosVolume(diskImage)
-        }
-        volume.verify()
-        // TODO: is if verify fails, force image to readOnly
+        volume = createVolume(volumeUri, isReadOnly)
         this.volumes.set(volumeUri.path, volume)
       }
 
@@ -182,7 +228,6 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
 
       const dirName = uri.with({ path: path.posix.dirname(uri.path) })
       this.fireSoon(
-        // *** try without dirChanged? ***
         { type: vscode.FileChangeType.Changed, uri: dirName },
         { type: vscode.FileChangeType.Created, uri: uri }
       )

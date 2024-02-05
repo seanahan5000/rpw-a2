@@ -13,8 +13,8 @@ export class VerifiedDos33Volume extends Dos33Volume {
 
   private sectorStates: SectorState[][] = [][16]
 
-  constructor(image: DiskImage) {
-    super(image)
+  constructor(image: DiskImage, reformat: boolean) {
+    super(image, reformat)
     // *** verify on construct? ***
   }
 
@@ -58,8 +58,8 @@ export class VerifiedDos33Volume extends Dos33Volume {
       `Sectors per track -- expected 16, got ${vtoc.sectorsPerTrack}`)
     this.check(vtoc.bytesPerSector == 256,
       `Bytes per sector -- expected 256, got ${vtoc.bytesPerSector}`)
-    this.checkWarn(vtoc.data[0x00] == 4,
-      `Questionable VTOC[0] value -- expected 4, got ${vtoc.data[0x00]}`)
+    this.checkWarn(vtoc.data[0x00] == 0 || vtoc.data[0x00] == 4,
+      `Questionable VTOC[0] value -- expected 0 or 4, got ${vtoc.data[0x00]}`)
 
     // *** check allocation track and direction ***
 
@@ -224,16 +224,14 @@ export class VerifiedDos33Volume extends Dos33Volume {
   }
 
   private progress(message: string) {
-    console.log(message)
+    // console.log(message)
   }
 }
 
 
 function testDos33() {
   const diskImage = new DiskImage("dsk", new Uint8Array(35 * 16 * 256), false)
-  const volume = new VerifiedDos33Volume(diskImage)
-  volume.format(false)
-  volume.commitChanges()
+  const volume = new VerifiedDos33Volume(diskImage, true)
   const parent = new Dos33VolFileEntry(volume)
   const file = volume.createFile(parent, "TEST_FILE", <ProdosFileType>0x04/*ProdosFileType.BIN*/, 0x2000)
   let direction = 1

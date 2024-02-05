@@ -1,12 +1,16 @@
 {
 	"name": "rpwa2",
 	"displayName": "RPW A2",
-	"description": "File system support for Apple II DOS 3.3 and ProDOS files",
+	"description": "Apple II DOS 3.3 and ProDOS file systems and HIRES image editor",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
 	"version": "0.1.0",
 	"license": "MIT",
-	"engines": {
+	"repository": {
+    "type": "git",
+    "url": "https://github.com/seanahan5000/rpw-a2.git"
+  },
+"engines": {
 		"vscode": "^1.74.0"
 	},
 	"categories": [
@@ -111,13 +115,13 @@
 			]
 		}
 	},
-    "scripts": {
+	"scripts": {
 		"vscode:prepublish": "npm run package",
 		"webpack": "webpack --mode development",
 		"webpack-dev": "webpack --mode development --watch",
         "package": "webpack --mode production --devtool hidden-source-map",
 		"test-compile": "tsc -p ./"
-    },
+	},
 	"devDependencies": {
 		"@types/node": "^16.18.34",
 		"@types/vscode": "^1.73.0",

@@ -18,11 +18,11 @@ enum TwoMGFormat {
   Nib    = 2
 }
 
-class TwoMGHeader {
+export class TwoMGHeader {
   private data: Uint8Array
 
   constructor(data: Uint8Array) {
-    this.data = data.subarray(0, 64)
+    this.data = data
   }
 
   public verify() {
@@ -44,6 +44,19 @@ class TwoMGHeader {
       this.check(this.imageFormat == 1,
         `Unexpected .2mg image format: ${this.imageFormat}`)
     }
+  }
+
+  public format() {
+    this.data.fill(0)
+    this.data.set([0x32, 0x49, 0x4D, 0x47], 0x00)   // "2IMG"
+    this.data.set([0x58, 0x47, 0x53, 0x21], 0x04)   // "XGS!"
+    this.data.set([0x40, 0x00], 0x08)               // header size
+    this.data.set([0x01, 0x00], 0x0A)               // version 1
+    this.data.set([0x01, 0x00, 0x00, 0x00], 0x0C)   // 01=Prodos
+    this.data.set([0x40, 0x00, 0x00, 0x00], 0x18)   // offset to disk data
+    const dataSize = this.data.length - 64
+    this.dataSize = dataSize
+    this.prodosBlocks = Math.floor(dataSize / 512)
   }
 
   public get id(): string {
@@ -90,6 +103,13 @@ class TwoMGHeader {
       (this.data[0x16] << 16) + (this.data[0x17] << 24)
   }
 
+  private set prodosBlocks(value: number) {
+    this.data[0x14] = (value >>  0) & 0xff
+    this.data[0x15] = (value >>  8) & 0xff
+    this.data[0x16] = (value >> 16) & 0xff
+    this.data[0x17] = (value >> 24) & 0xff
+  }
+
   public get dataOffset(): number {
     return this.data[0x18] + (this.data[0x19] << 8) +
       (this.data[0x1A] << 16) + (this.data[0x1B] << 24)
@@ -98,6 +118,13 @@ class TwoMGHeader {
   public get dataSize(): number {
     return this.data[0x1C] + (this.data[0x1D] << 8) +
       (this.data[0x1E] << 16) + (this.data[0x1F] << 24)
+  }
+
+  private set dataSize(value: number) {
+    this.data[0x1C] = (value >>  0) & 0xff
+    this.data[0x1D] = (value >>  8) & 0xff
+    this.data[0x1E] = (value >> 16) & 0xff
+    this.data[0x1F] = (value >> 24) & 0xff
   }
 
   private check(test: boolean, message: string) {
@@ -149,6 +176,10 @@ export class DiskImage {
       default:
         throw new Error(`Unknown disk volume type "${typeName}"`)
     }
+  }
+
+  public getByteSize(): number {
+    return this.diskData.length
   }
 
   public getBlockCount(): number {

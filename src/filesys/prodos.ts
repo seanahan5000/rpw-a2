@@ -475,8 +475,12 @@ export class ProdosVolume {
   private bitmapBlocks: number
   public volFileEntry: ProdosFileEntry
 
-  constructor(image: DiskImage) {
+  constructor(image: DiskImage, format: boolean) {
     this.image = image
+    if (format) {
+      this.format("UNTITLED")
+    }
+
     this.totalBlocks = image.getBlockCount()
     this.bitmapBlocks = Math.ceil(this.totalBlocks / (512 * 8))
 
@@ -494,8 +498,8 @@ export class ProdosVolume {
     this.volFileEntry = new ProdosVolFileEntry(this, block)
   }
 
+  // caller is responsible for reverting changes beforehand, if necessary
   public format(volumeName: string): void {
-    this.revertChanges()
     const blockCount = this.image.getBlockCount()
     if (blockCount > 65535) {
       throw new Error("Maximum block count of 65535 exceeded")
@@ -550,9 +554,10 @@ export class ProdosVolume {
 
     // init volume bitmap
 
+    const bitmapBlocks = Math.ceil(blockCount / (512 * 8))
     let byteCount = Math.ceil(blockCount / 8)
     let bitCount = blockCount & 7
-    for (let i = 0; i < this.bitmapBlocks; i += 1) {
+    for (let i = 0; i < bitmapBlocks; i += 1) {
       block = this.readBlock(6 + i)
       block.data.fill(0)
 
@@ -574,10 +579,10 @@ export class ProdosVolume {
         }
 
         // allocate volume bitmap blocks
-        for (let j = 0; j < this.bitmapBlocks; j += 1) {
+        for (let j = 0; j < bitmapBlocks; j += 1) {
           this.clearBit(6 + j, block.data)
         }
-      } else if (i + 1 == this.bitmapBlocks) {
+      } else if (i + 1 == bitmapBlocks) {
         if (bitCount) {
           for (let j = bitCount; j < 8; j += 1) {
             this.clearBit((count - 1) * 8 + j, block.data)
@@ -588,6 +593,7 @@ export class ProdosVolume {
 
     this.totalBlocks = blockCount
     this.bitmapPointer = 6
+    this.commitChanges()
   }
 
   private clearBit(bit: number, bytes: Uint8Array): void {

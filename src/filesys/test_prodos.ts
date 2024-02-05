@@ -13,8 +13,8 @@ export class VerifiedProdosVolume extends ProdosVolume {
 
   private blockStates: BlockState[] = []
 
-  constructor(image: DiskImage) {
-    super(image)
+  constructor(image: DiskImage, reformat: boolean) {
+    super(image, reformat)
     // *** verify on construct? ***
   }
 
@@ -316,9 +316,7 @@ function testProdos() {
   // *** test larger jumps up/down in size ***
 
   const diskImage = new DiskImage("hdv", new Uint8Array(0x1FFFE00), false)
-  const volume = new VerifiedProdosVolume(diskImage)
-  volume.format("TEST_VOLUME")
-  volume.commitChanges()
+  const volume = new VerifiedProdosVolume(diskImage, true)
 
   const parent = volume.findFileEntry("")
   if (!parent) {

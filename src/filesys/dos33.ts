@@ -281,8 +281,11 @@ export class Dos33Volume {
   readonly SectorsPerTrack = 16
   readonly BytesPerSector = 256
 
-  constructor(image: DiskImage) {
+  constructor(image: DiskImage, reformat: boolean) {
     this.image = image
+    if (reformat) {
+      this.format(false)
+    }
   }
 
   public commitChanges(): void {
@@ -311,10 +314,8 @@ export class Dos33Volume {
     return new Dos33VTOC(this.readTrackSector(17, 0))
   }
 
+  // caller is responsible for reverting changes beforehand, if necessary
   format(isBootable: boolean): void {
-    // *** can't reset because verify will complain
-    // this.revertChanges()
-
     // zero all sectors
     for (let t = 0; t < this.TracksPerDisk; t += 1) {
       for (let s = 0; s < this.SectorsPerTrack; s += 1) {
@@ -379,6 +380,8 @@ export class Dos33Volume {
     //     t += 1
     //   }
     // }
+
+    this.commitChanges()
   }
 
   // NOTE: does not throw error on file not found
