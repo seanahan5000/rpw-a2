@@ -16,7 +16,8 @@ function tippy(a: string, b: any) {}
 
 // TODO: what about these?
 // import "@vscode/codicons/dist/codicon.css"
-import "./display_view.css"
+// TODO: is this needed for extension?
+// import "./display_view.css"
 
 enum DisplaySource {
   ACTIVE    = 0,

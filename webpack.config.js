@@ -4,6 +4,8 @@
 
 const path = require('path');
 
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+
 /**@type {import('webpack').Configuration}*/
 
 const extConfig = {
@@ -37,15 +39,19 @@ const extConfig = {
                 }]
             },
             {
-                test: /\.css$/i,
-                use: [{ loader: 'css-loader' }]
-            },
-            {
                 test: /\.(png|svg|jpg|jpeg|gif|ttf)$/i,
                 type: 'asset/resource'
             }
         ]
-    }
+    },
+    plugins: [
+        new CopyWebpackPlugin({
+            patterns: [
+                { from: 'images', to: 'images' },
+                { from: 'src/display_view.css' }
+            ]
+        })
+    ]
 }
 
 const webConfig = {
