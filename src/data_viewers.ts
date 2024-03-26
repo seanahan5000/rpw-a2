@@ -196,7 +196,7 @@ export class ViewLisa2 {
         line += String.fromCharCode(byte)
         byte = data[offset]
       }
-      line = line.padEnd(8, " ")
+      line = line.padEnd(8, "\xa0")
 
       if (byte != 0x0d) {
         let count = 0
@@ -208,7 +208,7 @@ export class ViewLisa2 {
           if (byte >= 0x80) {
             line += this.tokens[byte & 0x7f]
           } else if (byte < 0x20) {
-            line += " "
+            line += "\xa0"
           } else {
             line += String.fromCharCode(byte)
           }
@@ -259,7 +259,7 @@ export class ViewInteger {
       let lineNumber = data[offset + 0] + (data[offset + 1] << 8)
       offset += 2
 
-      out += `<span class="as-linenum">${lineNumber.toString().padStart(5, " ")}</span>`
+      out += `<span class="as-linenum">${lineNumber.toString().padStart(5, "\xa0")}</span>`
 
       let wasToken = true
       while (true) {
@@ -272,7 +272,7 @@ export class ViewInteger {
 
         let isToken = (byte < 0x80) && (this.tokens[byte].length > 1)
         if (wasToken && !isToken) {
-          out += " "
+          out += "\xa0"
         }
         wasToken = isToken
 
@@ -333,7 +333,7 @@ export class ViewInteger {
           } else {
             let token = this.tokens[byte]
             if (token.length > 1) {
-              out += " "
+              out += "\xa0"
             }
             out += `<span class="as-token">${token}</span>`
           }
@@ -367,7 +367,7 @@ export class ViewText {
               let columnIndex = 0
               while (line != "") {
                 if (line[0] == ";") {
-                  paddedLine = paddedLine.padEnd(tabStops[2], " ")
+                  paddedLine = paddedLine.padEnd(tabStops[2], "\xa0")
                   paddedLine += line
                   break
                 }
@@ -381,9 +381,9 @@ export class ViewText {
                 }
                 line = line.substring(pos + 1)
                 if (paddedLine.length < tabStops[columnIndex] - 1) {
-                  paddedLine = paddedLine.padEnd(tabStops[columnIndex] - 1, " ")
+                  paddedLine = paddedLine.padEnd(tabStops[columnIndex] - 1, "\xa0")
                 }
-                paddedLine += " "
+                paddedLine += "\xa0"
                 columnIndex += 1
                 if (columnIndex == tabStops.length) {
                   paddedLine += line
@@ -429,7 +429,7 @@ export class ViewBinaryHex {
       if (line == "") {
         line = `<span class="bin-addr">${(address + offset).toString(16).toUpperCase().padStart(4, "0")}:</span>`
       }
-      line += " " + data[offset].toString(16).toUpperCase().padStart(2, "0")
+      line += "\xa0" + data[offset].toString(16).toUpperCase().padStart(2, "0")
       offset += 1
       if ((offset & 0xf) == 0) {
         if (line != "") {
@@ -497,18 +497,18 @@ export class ViewBinaryDisasm {
         opArgs = ""
       }
 
-      out += " "
+      out += "\xa0"
       for (let i = 0; i < 3; i += 1) {
         if (i < opLength) {
           let value = data[offset + i]
-          out += " "
+          out += "\xa0"
           out += value.toString(16).padStart(2, "0").toUpperCase()
         } else {
-          out += "   "
+          out += "\xa0\xa0\xa0"
         }
       }
 
-      out += `    ${opcode}   ${opArgs}<br>`
+      out += `\xa0\xa0\xa0\xa0${opcode}\xa0\xa0\xa0${opArgs}<br>`
       offset += opLength
     }
     return out

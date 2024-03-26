@@ -7,8 +7,6 @@
 //
 //  - fix pasteImage positioning problems (display resized larger than screen)
 //    - parse image position information from text
-//  - click outside of drawable area should be completely ignored
-//    - selection stops updating when edge hit
 //
 //  ? change cursor when over resize area of "actual size" overlay
 //  ? if actual size overlay larger than zoom, show bounding box
@@ -29,10 +27,11 @@ import { IHostHooks, PixelData } from "./shared"
 import { Point, Size, Rect, pointInRect, rectIsEmpty } from "./shared"
 import { IMachineDisplay } from "./shared"
 import { SCREEN_WIDTH, SCREEN_HEIGHT, HiresFrame, HiresTable } from "./shared"
-
-// import { packNaja1, packNaja2 } from "./pack"
-// import { textFromNaja, textFromPixels, imageFromText } from "./hex_parser"
 import { textFromPixels, imageFromText } from "./copy_paste"
+
+// dbug-only
+// import { packNaja1, packNaja2 } from "./pack"
+// import { textFromNaja } from "./unpack"
 
 //------------------------------------------------------------------------------
 
@@ -100,7 +99,8 @@ export class HiresDisplay {
   protected displayData?: ImageData
   protected displayArray?: Uint32Array
 
-  protected useInterlaceLines = true
+  // TODO: figure out if this should be used anymore
+  protected useInterlaceLines = false
 
   public onToolChanged?: (toolIndex: Tool) => void
   public onToolRectChanged?: (toolRect: Rect) => void
@@ -970,7 +970,8 @@ export class ZoomHiresDisplay extends HiresDisplay {
       this.captureUndo()
       this.selectBits = this.captureRect(this.toolRect)
       if (!(modifiers & ModifierKeys.OPTION)) {
-        this.fillRect(this.toolRect, this.backColor)
+        const preserveEdgeHighBits = true
+        this.fillRect(this.toolRect, this.backColor, preserveEdgeHighBits)
       }
       this.selectBack = new HiresFrame(this.frame)
     }
@@ -1237,7 +1238,8 @@ export class ZoomHiresDisplay extends HiresDisplay {
           }
           if (clear) {
             this.captureUndo()
-            this.fillRect(this.toolRect, this.backColor)
+            const preserveEdgeHighBits = true
+            this.fillRect(this.toolRect, this.backColor, preserveEdgeHighBits)
             this.clearToolRect()
             this.updateToMemory()
           }
@@ -1245,6 +1247,7 @@ export class ZoomHiresDisplay extends HiresDisplay {
 
         if (pixelData) {
           let imageText: string
+          // dbug-only
           // if (compress) {
           //   // let byteData = packNaja1(pixelData)
           //   let byteData = packNaja2(pixelData)
@@ -1593,13 +1596,18 @@ export class ZoomHiresDisplay extends HiresDisplay {
   }
 
   // TODO: should this update machine memory instead of caller?
-  private fillRect(r: Rect, color: number) {
+  private fillRect(r: Rect, color: number, preserveEdgeHighBits = false) {
     let cr = this.clipToPage(r)
     if(rectIsEmpty(cr)) {
       return
     }
 
     let edges = new EdgeState(cr)
+
+    if (preserveEdgeHighBits) {
+      edges.leftMask &= 0x7f
+      edges.rightMask &= 0x7f
+    }
 
     let colorPhase: number
     if ((color & 0x7f) == 0 || (color & 0x7f) == 0x7f) {

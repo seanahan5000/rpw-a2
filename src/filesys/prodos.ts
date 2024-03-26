@@ -115,15 +115,6 @@ export class ProdosFileEntry implements FileEntry {
     this.blockOffset = offset
 
     this.data = block.data.subarray(offset, offset + 0x27)
-
-    // TODO: add get/set for these as needed
-
-    // let creationDate = this.data[0x18] + (this.data[0x19] << 8)
-    // let creationTime = this.data[0x1A] + (this.data[0x1B] << 8)
-    // this.creation = new ProdosDateTime(creationDate, creationTime)
-    // let lastModDate = this.data[0x21] + (this.data[0x22] << 8)
-    // let lastModTime = this.data[0x23] + (this.data[0x24] << 8)
-    // this.lastMod = new ProdosDateTime(lastModDate, lastModTime)
   }
 
   initialize(fileName: string, typeByte: ProdosFileType, auxType: number): void {
@@ -252,6 +243,12 @@ export class ProdosFileEntry implements FileEntry {
     this.data[0x17] = value >> 16
   }
 
+  public get creation(): ProdosDateTime {
+    const creationDate = this.data[0x18] + (this.data[0x19] << 8)
+    const creationTime = this.data[0x1A] + (this.data[0x1B] << 8)
+    return new ProdosDateTime(creationDate, creationTime)
+  }
+
   public get version(): number {
     return this.data[0x1C]
   }
@@ -266,6 +263,16 @@ export class ProdosFileEntry implements FileEntry {
 
   private set access(value: number) {
     this.data[0x1E] = value
+  }
+
+  public get locked(): boolean {
+    return this.access == 0x21
+  }
+
+  public get lastMod(): ProdosDateTime {
+    const lastModDate = this.data[0x21] + (this.data[0x22] << 8)
+    const lastModTime = this.data[0x23] + (this.data[0x24] << 8)
+    return new ProdosDateTime(lastModDate, lastModTime)
   }
 
   public get headerPointer(): number {
@@ -301,16 +308,19 @@ export class ProdosVolSubDir {
     this.keyPointer = block.index
     this.data = block.data.subarray(0x04, 0x04 + 0x27)
 
+    const isVolumeHeader = (block.index == 2)
     const type = this.storageType
-    if (type != 0 && type != StorageType.VolDir && type != StorageType.SubDir) {
-      throw new Error(`Invalid volume/subDir storageType ${type}`)
+    if (isVolumeHeader) {
+      // NOTE: Many images don't have the storage type correctly set to
+      //  StorageType.VolDir (0xF) so just ignore it here.
+      // if (type != StorageType.VolDir) {
+      //   throw new Error(`Invalid volume/subDir storageType ${type}`)
+      // }
+    } else {
+      if (type != StorageType.SubDir) {
+        throw new Error(`Invalid subDir storageType ${type}`)
+      }
     }
-
-    // TODO: add get/set for these as needed
-
-    // let creationDate = this.data[0x18] + (this.data[0x19] << 8)
-    // let creationTime = this.data[0x1A] + (this.data[0x1B] << 8)
-    // this.creation = new ProdosDateTime(creationDate, creationTime)
   }
 
   // only used for sub-directories, not volume
@@ -368,6 +378,10 @@ export class ProdosVolSubDir {
     return this.data[0x10]
   }
 
+  // let creationDate = this.data[0x18] + (this.data[0x19] << 8)
+  // let creationTime = this.data[0x1A] + (this.data[0x1B] << 8)
+  // this.creation = new ProdosDateTime(creationDate, creationTime)
+
   public get version(): number {
     return this.data[0x1C]
   }
@@ -399,6 +413,9 @@ export class ProdosVolSubDir {
   public set fileCount(value: number) {
     this.data[0x21] = value
   }
+
+  // NOTE: For volumes, storageType might be several different values
+  //  so compare against StorageType.SubDir, not StorageType.VolDir
 
   public get parentPointer(): number {
     if (this.storageType != StorageType.SubDir) {
@@ -437,14 +454,14 @@ export class ProdosVolSubDir {
   }
 
   public get bitmapPointer(): number {
-    if (this.storageType != StorageType.VolDir) {
+    if (this.storageType == StorageType.SubDir) {
       throw new Error("Invalid operation: bitmapPointer not valid in subDir")
     }
     return this.data[0x23] + (this.data[0x24] << 8)
   }
 
   public get totalBlocks(): number {
-    if (this.storageType != StorageType.VolDir) {
+    if (this.storageType == StorageType.SubDir) {
       throw new Error("Invalid operation: totalBlocks not valid in subDir")
     }
     return this.data[0x25] + (this.data[0x26] << 8)
@@ -475,7 +492,7 @@ export class ProdosVolume {
   private bitmapBlocks: number
   public volFileEntry: ProdosFileEntry
 
-  constructor(image: DiskImage, format: boolean) {
+  constructor(image: DiskImage, format = false) {
     this.image = image
     if (format) {
       this.format("UNTITLED")
@@ -488,6 +505,9 @@ export class ProdosVolume {
 
     let block = this.readBlock(this.volumeHeaderBlock)
     const volSubDir = new ProdosVolSubDir(this, block)
+
+    // TODO: For now, be strict and require the image size exactly match the volume size.
+    //  This causes many Asimov images to fail, so more investigation work is needed.
     if (volSubDir.totalBlocks != this.totalBlocks) {
       throw new Error(`Image size ${this.totalBlocks} doesn't match totalBlocks ${volSubDir.totalBlocks} in header`)
     }
@@ -887,7 +907,10 @@ export class ProdosVolume {
 
   // NOTE: This needs to work correctly even when files are being deleted
   //  from within the callback function.
-  public forEachAllocatedFile(parent: FileEntry, fileProc: ProdosFileProc) {
+  public forEachAllocatedFile(parent: FileEntry | undefined, fileProc: ProdosFileProc) {
+    if (!parent) {
+      parent = this.volFileEntry
+    }
     let curBlock = this.readBlock((<ProdosFileEntry>parent).keyPointer)
     let volSubDir = new ProdosVolSubDir(this, curBlock)
     if (volSubDir.entryLength != 0x27) {

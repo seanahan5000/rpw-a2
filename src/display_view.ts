@@ -61,8 +61,46 @@ const displayTemplate = `
       <div id="xy-palette">
         <div class="coord"></div>
       </div>
+      <div id="help-button-div">
+        <button id="help-button">?</button>
+      </div>
+    </div>
+    <div id="help-palette">
+      <div id="help-col1"></div>
+      <div id="help-col2"></div>
     </div>
   </div>`
+
+const helpText1 = `
+  <u>Tools</u><br>
+  s: selection<br>
+  p: pencil<br>
+  r: rectangle<br>
+  f: framed rectangle<br>
+  ?: toggle this help<br>
+  <br>
+  <u>Colors</u><br>
+  c#: select foreground color<br>
+  cx: swap between color sets<br>
+  x: xor with foreground color<br>
+`
+
+const helpText2 = `
+  <u>Selection Tool</u><br>
+  control-select: minimize selection<br>
+  arrows: move selection<br>
+  backspace: delete selection<br>
+  option-drag: stamp selection<br>
+  t: toggle selection transparency<br>
+  cmd-shift-h: flip horizontal<br>
+  cmd-shift-v: flip vertical<br>
+  <br>
+  <u>Zoom Mode</u><br>
+  1-6: zoom in/out at cursor<br>
+  g: toggle zoom grid<br>
+  drag actual-size box center: move<br>
+  drag actual-size box corner: resize<br>
+`
 
 const toolNames: string[] = [
   require("../media/tool-move.png"),
@@ -84,6 +122,9 @@ export class DisplayView {
   private toolPalette: HTMLDivElement
   private colorPalette: HTMLDivElement
   private xyPalette: HTMLDivElement
+  private helpButton: HTMLDivElement
+  private showHelp = false
+  private helpPalette: HTMLDivElement
   private hiresCanvas: HTMLCanvasElement
   private hiresDisplay: ZoomHiresDisplay
   private displaySource: DisplaySource
@@ -113,11 +154,12 @@ export class DisplayView {
     this.project = project
 
     // TODO: base these on something real
-    this.showPages = (this.project != null)
-    this.allowToggleEdit = (this.project != null)
-    this.startInEditMode = (this.project == null)
+    this.showPages = (this.project != undefined)
+    this.allowToggleEdit = (this.project != undefined)
+    this.startInEditMode = (this.project == undefined)
 
     this.topDiv = <HTMLDivElement>document.createElement("div")
+    // TODO: there's security issue with doing this within a VSCode webview
     this.topDiv.innerHTML = displayTemplate
     parent.appendChild(this.topDiv)
 
@@ -133,9 +175,20 @@ export class DisplayView {
     this.hiresCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#hires-canvas")
     this.hiresDisplay = new ZoomHiresDisplay(this.hiresCanvas, machineDisplay)
 
+    // TODO: clean all this up
     this.toolPalette = <HTMLDivElement>this.displayGrid.querySelector("#tool-palette")
     this.colorPalette = <HTMLDivElement>this.displayGrid.querySelector("#color-palette")
     this.xyPalette = <HTMLDivElement>this.displayGrid.querySelector("#xy-palette")
+    this.helpButton = <HTMLDivElement>this.displayGrid.querySelector("#help-button-div")
+    this.helpButton.onmousedown = (e: MouseEvent) => {
+      this.toggleHelp()
+    }
+
+    this.helpPalette = <HTMLDivElement>this.displayGrid.querySelector("#help-palette")
+    const helpCol1 = <HTMLDivElement>this.helpPalette.querySelector("#help-col1")
+    helpCol1.innerHTML = helpText1
+    const helpCol2 = <HTMLDivElement>this.helpPalette.querySelector("#help-col2")
+    helpCol2.innerHTML = helpText2
 
     for (let i = 0; i < toolNames.length; i += 1) {
       const image = document.createElement("img")
@@ -458,6 +511,8 @@ export class DisplayView {
         this.hiresDisplay.toggleTransparency()
       } else if (curKey == "x") {
         this.hiresDisplay.toggleColor()
+      } else if (curKey == "?") {
+        this.toggleHelp()
       }
 
       this.lastKey = ""
@@ -820,6 +875,8 @@ export class DisplayView {
     this.toolPalette.className = this.isEditing ? "visible" : ""
     this.colorPalette.className = this.isEditing ? "visible" : ""
     this.xyPalette.className = this.isEditing ? "visible" : ""
+    this.helpButton.className = this.isEditing ? "visible" : ""
+    this.helpPalette.className = this.isEditing && this.showHelp ? "visible" : ""
 
     if (this.isEditing) {
       this.setTool(this.editTool)
@@ -833,6 +890,11 @@ export class DisplayView {
       this.hiresDisplay.setZoomScale(1, this.mousePt)
       this.hiresDisplay.selectNone()
     }
+  }
+
+  private toggleHelp() {
+    this.showHelp = !this.showHelp
+    this.helpPalette.className = this.isEditing && this.showHelp ? "visible" : ""
   }
 
   private getPageIndex(): number {

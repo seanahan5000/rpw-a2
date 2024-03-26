@@ -332,7 +332,7 @@ export class ViewerProvider implements vscode.CustomReadonlyEditorProvider<Viewe
       this.context.extensionUri, 'out', 'webview.js'));
 
     const styleMainUri = webview.asWebviewUri(vscode.Uri.joinPath(
-      this.context.extensionUri, 'src', 'data_viewer.css'));
+      this.context.extensionUri, 'out', 'data_viewers.css'));
 
     const nonce = getNonce()
 
@@ -475,11 +475,12 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(
       this._context.extensionUri, 'out', 'webview.js'));
 
+    // *** TODO: bring this back ***
     // const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(
     //   this._context.extensionUri, 'media', 'vscode.css'));
 
     const styleMainUri = webview.asWebviewUri(vscode.Uri.joinPath(
-      this._context.extensionUri, 'src', 'display_view.css'));
+      this._context.extensionUri, 'out', 'display_view.css'));
 
     // Use a nonce to whitelist which scripts can be run
     const nonce = getNonce();

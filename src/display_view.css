@@ -180,6 +180,8 @@
   height: 40px;
 }
 
+/* XY palette */
+
 #xy-palette {
   grid-column: 2;
   grid-row: 1;
@@ -194,6 +196,52 @@
   background-color: #444;
   margin-left: 4px;
   padding: 4px;
+}
+
+/* help palettte */
+
+#help-button-div {
+  display: none;
+  grid-column: 3;
+  grid-row: 1;
+  margin-left: 4px;
+  margin-top: 30px;
+}
+
+#help-button-div.visible {
+  display: block;
+}
+
+#help-button {
+  font-family: var(--mono-font);
+  font-size: 10pt;
+  background-color: #444;
+  color: lightgray;
+}
+
+#help-palette {
+  display: none;
+  grid-column: 2;
+  grid-row: 3;
+  margin-top: 4px;
+  background-color: #444;
+  padding: 4px;
+  font-family: var(--mono-font);
+  font-size: 8pt;
+}
+
+#help-palette.visible {
+  display: block;
+}
+
+#help-col1 {
+  float: left;
+  width: 50%;
+}
+
+#help-col2 {
+  float: left;
+  width: 50%;
 }
 
 /*----------------------------------------------------------------------------*/

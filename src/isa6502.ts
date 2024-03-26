@@ -1,3 +1,4 @@
+// TODO: dbug-only
 // import { Machine } from "./machine"
 // import { SourceLine } from "./source_doc"
 
@@ -14,6 +15,7 @@ type OpInfo = {
 
 export abstract class Isa6502 {
 
+  // TODO: dbug-only
   // public static getRegIndex(machine: Machine, sourceLine: SourceLine): number {
   //   switch (Isa6502.ops[sourceLine.objBuffer[sourceLine.objOffset + 0]].ad) {
   //     case "zpx":
@@ -31,6 +33,7 @@ export abstract class Isa6502 {
   //   }
   // }
 
+  // TODO: dbug-only
   // public static computeAddress(machine: Machine, sourceLine: SourceLine, useIndex: boolean = true): OpInfo {
   //   let data0 = sourceLine.objBuffer[sourceLine.objOffset + 0]
   //   let data1 = sourceLine.objLength >= 1 ? sourceLine.objBuffer[sourceLine.objOffset + 1] : 0

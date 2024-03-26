@@ -281,7 +281,7 @@ export class Dos33Volume {
   readonly SectorsPerTrack = 16
   readonly BytesPerSector = 256
 
-  constructor(image: DiskImage, reformat: boolean) {
+  constructor(image: DiskImage, reformat = false) {
     this.image = image
     if (reformat) {
       this.format(false)
@@ -364,7 +364,7 @@ export class Dos33Volume {
       sector.data[0x02] = s - 1
     }
 
-    // initialize boot image
+    // *** initialize boot image
     // let t = 0
     // let s = 0
     // let srcOffset = 0
@@ -493,7 +493,7 @@ export class Dos33Volume {
     }
   }
 
-  forEachAllocatedFile(parent: FileEntry, fileProc: Dos33FileProc): void {
+  forEachAllocatedFile(parent: FileEntry | undefined, fileProc: Dos33FileProc): void {
     const vtoc = this.readVTOC()
     let catTrack = vtoc.catTrack
     let catSector = vtoc.catSector

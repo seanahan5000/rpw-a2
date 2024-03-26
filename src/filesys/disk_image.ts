@@ -28,9 +28,12 @@ export class TwoMGHeader {
   public verify() {
     this.check(this.id == "2IMG",
       `Invalid .2mg id "${this.id}"`)
-    this.check(this.headerSize == 64,
+    // NOTE: some images have the headerSize set to 52 instead of 64, so permit both
+    this.check(this.headerSize == 64 || this.headerSize == 52,
       `Unexpected .2mg header size: ${this.headerSize}`)
-    this.check(this.versionNumber == 1,
+    // NOTE: some images incorrectly have the version number set
+    //  to 0 instead of 1, so permit that here
+    this.check(this.versionNumber <= 1,
       `Unexpected .2mg version number: ${this.versionNumber}`)
     if (this.imageFormat == TwoMGFormat.Dos33) {
       this.check(this.dataSize == 143360,
@@ -49,7 +52,7 @@ export class TwoMGHeader {
   public format() {
     this.data.fill(0)
     this.data.set([0x32, 0x49, 0x4D, 0x47], 0x00)   // "2IMG"
-    this.data.set([0x58, 0x47, 0x53, 0x21], 0x04)   // "XGS!"
+    this.data.set([0x52, 0x50, 0x57, 0x41], 0x04)   // "RPWA"
     this.data.set([0x40, 0x00], 0x08)               // header size
     this.data.set([0x01, 0x00], 0x0A)               // version 1
     this.data.set([0x01, 0x00, 0x00, 0x00], 0x0C)   // 01=Prodos
@@ -116,8 +119,13 @@ export class TwoMGHeader {
   }
 
   public get dataSize(): number {
-    return this.data[0x1C] + (this.data[0x1D] << 8) +
+    let value = this.data[0x1C] + (this.data[0x1D] << 8) +
       (this.data[0x1E] << 16) + (this.data[0x1F] << 24)
+    // NOTE: some images incorrectly leave dataSize 0
+    if (value == 0) {
+      value = this.prodosBlocks * 512
+    }
+    return value
   }
 
   private set dataSize(value: number) {
@@ -183,6 +191,11 @@ export class DiskImage {
   }
 
   public getBlockCount(): number {
+    if (this.diskData.length % 512 != 0) {
+      // TODO: investigate disk images that have a non-512 byte multiple length
+      //  (somewhat common in Asimov images)
+      // console.log(this.diskData.length % 512)
+    }
     return Math.floor(this.diskData.length / 512)
   }
 

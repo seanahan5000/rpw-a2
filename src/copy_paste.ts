@@ -1,6 +1,10 @@
 
 import { PixelData } from "./shared"
 
+// dbug-only
+// import { unpackNaja1, unpackNaja2 } from "./unpack"
+// import { SourceDocBuilder } from "./source_builder"
+
 //------------------------------------------------------------------------------
 
 export function textFromPixels(image: PixelData): string {
@@ -8,52 +12,102 @@ export function textFromPixels(image: PixelData): string {
   let indent = "                "
   let byteWidth = Math.floor((image.bounds.x + image.bounds.width + 6) / 7) - Math.floor(image.bounds.x / 7)
 
-  text += indent
-  text += `;{"x":${image.bounds.x},"y":${image.bounds.y}`
-  text += `,"width":${image.bounds.width},"height":${image.bounds.height}}\n`
+  let useHex = false      // TODO: get from settings
+  let upperCase = false   // TODO: get from settings
+  let vertical = false    // TODO: parameter?
+
+  let opcode = byteWidth == 1 ? "db " : "hex"
+  if (!useHex) {
+    opcode = ".byte"
+  }
 
   if (byteWidth == 1) {
     for (let i = 0; i < image.dataBytes.length; i += 1) {
-      text += indent + "DB  "
+      text += indent + opcode + " "
         + "%" + image.dataBytes[i].toString(2).padStart(8, "0") + "\n"
     }
   } else {
-    let lineIndex = 0
-    for (let i = 0; i < image.dataBytes.length; i += 1) {
-      if (lineIndex == 0) {
-        text += indent + "HEX "
+    let dataBytes = image.dataBytes
+
+    if (vertical) {
+      dataBytes = new Uint8Array(dataBytes.length)
+      for (let y = 0; y < image.bounds.height; y += 1) {
+        for (let x = 0; x < byteWidth; x += 1) {
+          const value = image.dataBytes[y * byteWidth + x]
+          dataBytes[x * image.bounds.height + y] = value
+        }
       }
-      text += image.dataBytes[i].toString(16).toUpperCase().padStart(2, "0")
-      if (++lineIndex == byteWidth) {
-        text += "\n"
-        lineIndex = 0
-      }
+      byteWidth = Math.min(image.bounds.height, 8)
     }
-    if (lineIndex != 0) {
-      text += "\n"
+
+    if (useHex) {
+      let lineIndex = 0
+      for (let i = 0; i < dataBytes.length; i += 1) {
+        if (lineIndex == 0) {
+          text += indent + opcode + " "
+        }
+        text += dataBytes[i].toString(16).padStart(2, "0")
+        if (++lineIndex == byteWidth) {
+          text += "\n"
+          lineIndex = 0
+        }
+      }
+      if (lineIndex != 0) {
+        text += "\n"
+      }
+    } else {
+      let lineIndex = 0
+      for (let i = 0; i < dataBytes.length; i += 1) {
+        if (lineIndex == 0) {
+          text += indent + opcode + " "
+        } else {
+          text += ","
+        }
+        text += "$" + dataBytes[i].toString(16).padStart(2, "0")
+        if (++lineIndex == byteWidth) {
+          text += "\n"
+          lineIndex = 0
+        }
+      }
+      if (lineIndex != 0) {
+        text += "\n"
+      }
     }
   }
 
+  if (upperCase) {
+    text = text.toUpperCase()
+  }
+
+  let header = indent
+  header += ";{"
+  header += `"x":${image.bounds.x},"y":${image.bounds.y}`
+  header += `,"width":${image.bounds.width},"height":${image.bounds.height}`
+  if (vertical) {
+    header += ',"vertical": true'
+  }
+  header += "}\n"
+
+  text = header + text
   return text
 }
 
 export function imageFromText(clipText: string): PixelData {
-  let lines = clipText.split(/\r?\n/)
-  let builder = new SourceDocBuilder()
-  let doc = builder.buildRawDoc(lines)
+  const lines = clipText.split(/\r?\n/)
+  const doc = SourceDocBuilder.buildRawDoc(lines)
 
-  let rawImage = new PixelData()
-  let rawData: number[] = []
+  const rawImage = new PixelData()
+  const rawData: number[] = []
   rawImage.dataBytes = rawData
   doc.sourceLines.forEach((srcLine) => {
-    let opcode = srcLine.opcode.toUpperCase()
+    let opcode = srcLine.opcode.toLowerCase()
     if (srcLine.comment.startsWith(";{")) {
       try {
         rawImage.bounds = JSON.parse(srcLine.comment.slice(1))
       } catch {
       }
     }
-    if (opcode == "HEX") {
+    if (opcode == "hex") {
       let argStr = srcLine.args
       let width = 0
       for (let i = 0; i < argStr.length; i += 2) {
@@ -65,7 +119,7 @@ export function imageFromText(clipText: string): PixelData {
       if (rawImage.bounds.width == 0) {
         rawImage.bounds.width = width * 7
       }
-    } else if (opcode == "DFB" || opcode == "DC.B" || opcode == "DB") {
+    } else if (opcode == "dfb" || opcode == "dc.b" || opcode == "db" || opcode == ".byte") {
       let argStr = srcLine.args
       let hexStr: string
       let width = 0
@@ -96,11 +150,22 @@ export function imageFromText(clipText: string): PixelData {
       }
     }
   })
+
+  // dbug-only
+  // let najaImage = unpackNaja1(rawData)
+  // if (najaImage) {
+  //   return najaImage
+  // }
+
+  // dbug-only
+  // najaImage = unpackNaja2(rawData)
+  // if (najaImage) {
+  //   return najaImage
+  // }
+
   if (rawImage.bounds.width == 0) {
     rawImage.bounds.width = rawData.length * 7
   }
-
-  // TODO: decompression hook here
 
   if (rawImage.bounds.height == 0) {
     let heightGuess = rawData.length / Math.floor(rawImage.bounds.width / 7)
@@ -117,11 +182,13 @@ export function imageFromText(clipText: string): PixelData {
 
 //------------------------------------------------------------------------------
 
+// if (false) {  // !dbug-only
+
 // Stub classes for use when full SourceDoc code not available.
 // TODO: revisit this once debugger code is integrated
 
 class SourceDocBuilder {
-  buildRawDoc(lines: string[]): SourceDoc {
+  public static buildRawDoc(lines: string[]): SourceDoc {
     return new SourceDoc(lines)
   }
 }
@@ -245,5 +312,7 @@ class SourceLine {
   public comment: string = ""
   commentColumn?: number
 }
+
+// } // !dbug-only
 
 //------------------------------------------------------------------------------

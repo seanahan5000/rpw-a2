@@ -399,4 +399,67 @@ function testProdos() {
 
 // *** prune directory block after all files in it are deleted
 
-// *** test that iterates through every file in Asimov archive
+//------------------------------------------------------------------------------
+
+// track parallel dir/file tree
+// track pass number
+  // do random dir/file create/rename/delete
+  // compare tree against image
+// after N iterations
+  // delete all files
+  // check final state
+
+// stress files (DOS 3.3)
+  // create file of random size/name
+    // if disk full, delete random file
+    // verify after every operation
+  // after looping, delete all remaining files
+  // confirm final size/state
+
+// stress files/dirs (Prodos)
+  // create a random directory
+
+//------------------------------------------------------------------------------
+
+import * as fs from 'fs'
+import { VerifiedDos33Volume } from "./test_dos33"
+
+function processFile(fileName: string) {
+  const n = fileName.lastIndexOf(".")
+  if (n >= 0) {
+    const suffix = fileName.substring(n + 1).toLowerCase()
+    if (suffix == "dsk" || suffix == "do" || suffix == "po" || suffix == "2mg" || suffix == "hdv") {
+      // console.log("Processing " + fileName)
+      const diskData = fs.readFileSync(fileName)
+      try {
+        const diskImage = new DiskImage(suffix, diskData, false)
+        if (diskImage.isDos33) {
+          const volume = new VerifiedDos33Volume(diskImage, false)
+        } else {
+          const volume = new VerifiedProdosVolume(diskImage, false)
+        }
+      } catch (e: any) {
+        console.log("Processing " + fileName)
+        console.log("  ### " + e.message)
+      }
+      return
+    }
+  }
+  // console.log("Ignored " + fileName)
+}
+
+function processDir(dirName: string) {
+  const files = fs.readdirSync(dirName)
+  for (let file of files) {
+    const fileName = dirName + "/" + file
+    if (fs.lstatSync(fileName).isDirectory()) {
+      processDir(fileName)
+    } else {
+      processFile(fileName)
+    }
+  }
+}
+
+// processDir("/Users/sean/dev/test_apple_ii")
+
+//------------------------------------------------------------------------------
