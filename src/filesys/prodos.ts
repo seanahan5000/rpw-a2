@@ -3,11 +3,9 @@ import { DiskImage, BlockData } from "./disk_image"
 
 //------------------------------------------------------------------------------
 
-// *** change to type of (Dos33FileEntry | ProdosFileEntry) ***
-  // *** but *AFTER* Dos33 code has been updated ***
 export interface FileEntry {
   get name(): string
-  get type(): string
+  get type(): FileType
   get auxType(): number
   getContents(): Uint8Array
   setContents(contents: Uint8Array): void
@@ -22,16 +20,21 @@ export enum StorageType {
   VolDir   = 0xF
 }
 
-export enum ProdosFileType {
-  PTX = 0x03,    // Pascal text
-  TXT = 0x04,    // ASCII, high bit clear
+export enum FileType {
+  TXT = 0x04,
   BIN = 0x06,
   DIR = 0x0F,
   AWP = 0x1A,    // AppleWorks Word Processing
+  INT = 0xFA,
   BAS = 0xFC,
-  VAR = 0xFD,
-  REL = 0xFE,    // EDASM relocatable
-  SYS = 0xFF
+  REL = 0xFE,    // EDASM relocatable (R in DOS 3.3)
+  SYS = 0xFF,
+
+  // fake types only used for DOS 3.3 support
+  S   = 0x100,    // often used by game cracks
+  X   = 0x101,    // ("New A" renamed to avoid confusion with BASIC files)
+  Y   = 0x102     // ("New B" renamed to avoid confusion with BIN files)
+                  // used by LISA for source files
 }
 
 type ProdosDataProc = (block: BlockData, fileOffset: number) => boolean
@@ -107,7 +110,6 @@ export class ProdosFileEntry implements FileEntry {
   private data: Uint8Array
 
   protected _name?: string
-  protected _type?: string
 
   constructor(volume: ProdosVolume, block: BlockData, offset: number) {
     this.volume = volume
@@ -117,12 +119,12 @@ export class ProdosFileEntry implements FileEntry {
     this.data = block.data.subarray(offset, offset + 0x27)
   }
 
-  initialize(fileName: string, typeByte: ProdosFileType, auxType: number): void {
+  initialize(fileName: string, typeByte: FileType, auxType: number): void {
 
     // default everything to zero
     this.data.fill(0)
 
-    if (typeByte == ProdosFileType.DIR) {
+    if (typeByte == FileType.DIR) {
       this.storageType = StorageType.Dir
     } else {
       this.storageType = StorageType.Seedling
@@ -179,23 +181,16 @@ export class ProdosFileEntry implements FileEntry {
     this._name = value
   }
 
-  public get type(): string {
-    if (!this._type) {
-      this._type = ProdosFileType[this.typeByte]
-      if (!this._type) {
-        this._type = "$" + this.typeByte.toString(16).toUpperCase().padStart(2, "0")
-      }
-    }
-    return this._type
+  public get type(): FileType {
+    return this.typeByte
   }
 
   public get typeByte(): number {
     return this.data[0x10]
   }
 
-  private set typeByte(value: number) {
+  public set typeByte(value: number) {
     this.data[0x10] = value
-    this._type = undefined
   }
 
   public get auxType(): number {
@@ -303,22 +298,24 @@ export class ProdosVolSubDir {
 
   private _name?: string
 
-  constructor(volume: ProdosVolume, block: BlockData) {
+  constructor(volume: ProdosVolume, block: BlockData, verify: boolean = true) {
     this.volume = volume
     this.keyPointer = block.index
     this.data = block.data.subarray(0x04, 0x04 + 0x27)
 
-    const isVolumeHeader = (block.index == 2)
-    const type = this.storageType
-    if (isVolumeHeader) {
-      // NOTE: Many images don't have the storage type correctly set to
-      //  StorageType.VolDir (0xF) so just ignore it here.
-      // if (type != StorageType.VolDir) {
-      //   throw new Error(`Invalid volume/subDir storageType ${type}`)
-      // }
-    } else {
-      if (type != StorageType.SubDir) {
-        throw new Error(`Invalid subDir storageType ${type}`)
+    if (verify) {
+      const isVolumeHeader = (block.index == 2)
+      const type = this.storageType
+      if (isVolumeHeader) {
+        // NOTE: Many images don't have the storage type correctly set to
+        //  StorageType.VolDir (0xF) so just ignore it here.
+        // if (type != StorageType.VolDir) {
+        //   throw new Error(`Invalid volume/subDir storageType ${type}`)
+        // }
+      } else {
+        if (type != StorageType.SubDir) {
+          throw new Error(`Invalid subDir storageType ${type}`)
+        }
       }
     }
   }
@@ -478,7 +475,7 @@ export class ProdosVolFileEntry extends ProdosFileEntry {
     this.keyPointer = block.index
     // TODO: should name come from volume?
     this._name = ""
-    this._type = "DIR"
+    this.typeByte = FileType.DIR
   }
 }
 
@@ -492,7 +489,7 @@ export class ProdosVolume {
   private bitmapBlocks: number
   public volFileEntry: ProdosFileEntry
 
-  constructor(image: DiskImage, format = false) {
+  constructor(image: DiskImage, format: boolean = false) {
     this.image = image
     if (format) {
       this.format("UNTITLED")
@@ -504,7 +501,7 @@ export class ProdosVolume {
     // *** share this code ***
 
     let block = this.readBlock(this.volumeHeaderBlock)
-    const volSubDir = new ProdosVolSubDir(this, block)
+    const volSubDir = new ProdosVolSubDir(this, block, !format)
 
     // TODO: For now, be strict and require the image size exactly match the volume size.
     //  This causes many Asimov images to fail, so more investigation work is needed.
@@ -631,29 +628,8 @@ export class ProdosVolume {
   public verify(): void {
   }
 
-  public preprocessName(name: string): string {
-    if (name.length > 15) {
-      const n = name.lastIndexOf(".")
-      if (n > 0) {
-        let suffix = name.substring(n)
-        // special case .PIC suffix in DOS 3.3
-        if (suffix == ".PIC") {
-          if (n <= 15) {
-            return name.substring(0, n)
-          }
-          suffix = ""
-        }
-        const base = name.substring(0, Math.min(14 - suffix.length, n))
-        name = base + "~" + suffix
-      } else {
-        name = name.substring(0, 14) + "~"
-      }
-    }
-    return name
-  }
-
   public deleteFile(parent: FileEntry, file: FileEntry, recurse: boolean): void {
-    if (file.type == "DIR") {
+    if (file.type == FileType.DIR) {
       if (!recurse) {
         const parentSubDir = this.getSubDir(parent)
         if (parentSubDir.fileCount > 0) {
@@ -665,7 +641,7 @@ export class ProdosVolume {
   }
 
   private freeFileEntry(parent: ProdosFileEntry, file: ProdosFileEntry): void {
-    if (file.type == "DIR") {
+    if (file.type == FileType.DIR) {
       // delete all child files
       this.forEachAllocatedFile(file, (child: FileEntry) => {
         const childEntry = child as ProdosFileEntry
@@ -697,7 +673,7 @@ export class ProdosVolume {
   public renameFile(parent: FileEntry, file: FileEntry, newName: string): void {
     const fileEntry = <ProdosFileEntry>file
 
-    if (parent.type != "DIR") {
+    if (parent.type != FileType.DIR) {
       throw new Error("parent is not a directory")
     }
 
@@ -710,7 +686,7 @@ export class ProdosVolume {
         throw new Error("File/directory exists with that name")
       }
 
-      if (file.type == "DIR") {
+      if (file.type == FileType.DIR) {
         // if renaming a directory, all need to rename it in its subDir block
         const subBlock = this.readBlock(fileEntry.keyPointer)
         const volSubDir = new ProdosVolSubDir(this, subBlock)
@@ -724,9 +700,9 @@ export class ProdosVolume {
   //  VSCode catches that case externally.  Would need to add a check here if ever
   //  operating outside VSCode extension.
   public copyDir(dstParentDir: ProdosFileEntry, srcVolume: ProdosVolume, srcDir: ProdosFileEntry) {
-    const dstDir = <ProdosFileEntry>this.createFile(dstParentDir, srcDir.name, ProdosFileType.DIR, 0x0000)
+    const dstDir = <ProdosFileEntry>this.createFile(dstParentDir, srcDir.name, FileType.DIR, 0x0000)
     srcVolume.forEachAllocatedFile(srcDir, (fileEntry: ProdosFileEntry) => {
-      if (fileEntry.type == "DIR") {
+      if (fileEntry.type == FileType.DIR) {
         this.copyDir(dstDir, srcVolume, fileEntry)
       } else {
         const dstFile = this.createFile(dstDir, fileEntry.name, fileEntry.typeByte, fileEntry.auxType)
@@ -740,7 +716,7 @@ export class ProdosVolume {
   public moveFile(file: FileEntry, dstDir: FileEntry): void {
     const srcFile = <ProdosFileEntry>file
 
-    if (dstDir.type != "DIR") {
+    if (dstDir.type != FileType.DIR) {
       throw new Error("destination is not a directory")
     }
 
@@ -754,7 +730,7 @@ export class ProdosVolume {
     dstFile.copyFrom(srcFile)
     dstFile.headerPointer = (<ProdosFileEntry>dstDir).keyPointer
 
-    if (dstFile.type == "DIR") {
+    if (dstFile.type == FileType.DIR) {
       // relink volSubDir back to new fileEntry
       let block = this.readBlock(dstFile.keyPointer)
       let volSubDir = new ProdosVolSubDir(this, block)
@@ -797,7 +773,7 @@ export class ProdosVolume {
         if (fileEntry.name == subName) {
           if (pathName != "") {
             // *** ignore non-directory in mid-path
-            if (fileEntry.type != "DIR") {
+            if (fileEntry.type != FileType.DIR) {
               // *** throw error? ***
               return true
             }
@@ -820,7 +796,7 @@ export class ProdosVolume {
   // *** VSCode checks for duplicate directories, but we should too
   // *** pass in/handle overwrite? ***
   // *** directories different?
-  public createFile(parent: FileEntry, fileName: string, type: ProdosFileType, auxType: number): FileEntry {
+  public createFile(parent: FileEntry, fileName: string, type: FileType, auxType: number): FileEntry {
 
     // TODO: validate/limit fileName *** also done in set name ***
 
@@ -886,7 +862,7 @@ export class ProdosVolume {
     return fileEntry
   }
 
-  private allocateFile(parent: ProdosFileEntry, fileName: string, type: ProdosFileType, auxType: number): FileEntry {
+  private allocateFile(parent: ProdosFileEntry, fileName: string, type: FileType, auxType: number): FileEntry {
 
     const fileEntry = this.allocFileEntry(parent)
     fileEntry.initialize(fileName, type, auxType)
@@ -896,8 +872,9 @@ export class ProdosVolume {
     fileEntry.keyPointer = keyBlock.index
     fileEntry.blocksUsed += 1
 
-    if (type == ProdosFileType.DIR) {
-      const subDir = new ProdosVolSubDir(this, keyBlock)
+    if (type == FileType.DIR) {
+      // NOTE: don't verify in ProdosVolSubDir before initializing it
+      const subDir = new ProdosVolSubDir(this, keyBlock, false)
       const entryIndex = fileEntry.getEntryIndex()
       subDir.initialize(fileName, fileEntry.blockIndex, entryIndex)
     }
@@ -949,7 +926,7 @@ export class ProdosVolume {
 
   private getSubDir(file: FileEntry): ProdosVolSubDir {
     const fileEntry = file as ProdosFileEntry
-    if (fileEntry.type != "DIR") {
+    if (fileEntry.type != FileType.DIR) {
       throw new Error("getSubDir only valid on directory")
     }
     const keyBlock = this.readBlock(fileEntry.keyPointer)

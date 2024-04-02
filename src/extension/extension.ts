@@ -5,7 +5,7 @@ import { HiresEditorProvider, ViewerProvider } from "./editor"
 export function activate(context: vscode.ExtensionContext) {
   const a2fs = new Apple2FileSystem()
 
-  // *** are all of these needed?
+  // TODO: are all of these needed?
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('dsk', a2fs, { isReadonly: false, isCaseSensitive: false }))
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('do', a2fs, { isReadonly: false, isCaseSensitive: false }))
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('po', a2fs, { isReadonly: false, isCaseSensitive: true }))
@@ -13,13 +13,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.registerFileSystemProvider('hdv', a2fs, { isReadonly: false, isCaseSensitive: true }))
 
   context.subscriptions.push(HiresEditorProvider.register(context))
-  context.subscriptions.push(ViewerProvider.register(context, "LST"))
   context.subscriptions.push(ViewerProvider.register(context, "BIN"))
   context.subscriptions.push(ViewerProvider.register(context, "BAS"))
   context.subscriptions.push(ViewerProvider.register(context, "INT"))
-  context.subscriptions.push(ViewerProvider.register(context, "TXT"))
+  context.subscriptions.push(ViewerProvider.register(context, "LST"))
 
-  // *** could this be made to work with multiple volumes at the same time? ***
+  // TODO: could this be made to work with multiple volumes at the same time?
   context.subscriptions.push(vscode.commands.registerCommand('extension.mountApple2FileSystem', async (uri: vscode.Uri) => {
 
     await vscode.commands.executeCommand("vscode.open", uri)

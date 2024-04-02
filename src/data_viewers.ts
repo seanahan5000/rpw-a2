@@ -7,48 +7,6 @@ import { HiresDisplay } from "./display"
 
 //------------------------------------------------------------------------------
 
-// function escapeMarkup (dangerousInput: string) {
-//   const dangerousString = String(dangerousInput);
-//   const matchHtmlRegExp = /["'&<>]/;
-//   const match = matchHtmlRegExp.exec(dangerousString);
-//   if (!match) {
-//     return dangerousInput;
-//   }
-
-//   const encodedSymbolMap = {
-//     '"': '&quot;',
-//     '\'': '&#39;',
-//     '&': '&amp;',
-//     '<': '&lt;',
-//     '>': '&gt;'
-//   };
-//   const dangerousCharacters = dangerousString.split('');
-//   const safeCharacters = dangerousCharacters.map(function (character) {
-//     return encodedSymbolMap[character] || character;
-//   });
-//   const safeString = safeCharacters.join('');
-//   return safeString;
-// }
-
-const escapeMap = new Map<string, string>(Object.entries({
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': '&quot;',
-  "'": '&#39;',
-  "/": '&#x2F;'
-}))
-
-// export function escape_html(source: string) {
-//   return String(source).replace(/[&<>"'\/]/g, (s: string) => escapeMap.get(s)!);
-// }
-
-function escapeHtml(source: string) {
-  return String(source).replace(/[&<>"'\/]/g, (s: string) => escapeMap.get(s)!)
-}
-
-//------------------------------------------------------------------------------
-
 export class ViewApplesoft {
 
   static readonly tokens: string[] = [
@@ -57,12 +15,12 @@ export class ViewApplesoft {
     "HGR2",  "HGR",    "HCOLOR=", "HPLOT",  "DRAW",    "XDRAW",  "HTAB",    "HOME",
     "ROT=",  "SCALE=", "SHLOAD",  "TRACE",  "NOTRACE", "NORMAL", "INVERSE", "FLASH",
     "COLOR=","POP",    "VTAB",    "HIMEM:", "LOMEM:",  "ONERR",  "RESUME",  "RECALL",
-    "STORE", "SPEED=", "LET",     "GOTO",   "RUN",     "IF",     "RESTORE", "&amp;",
+    "STORE", "SPEED=", "LET",     "GOTO",   "RUN",     "IF",     "RESTORE", "&",
     "GOSUB", "RETURN", "REM",     "STOP",   "ON",      "WAIT",   "LOAD",    "SAVE",
     "DEF",   "POKE",   "PRINT",   "CONT",   "LIST",    "CLEAR",  "GET",     "NEW",
     "TAB(",  "TO",     "FN",      "SPC(",   "THEN",    "AT",     "NOT",     "STEP",
-    "+",     "-",      "*",       "&#x2F;", "^",       "AND",    "OR",      "&gt;",
-    "=",     "&lt;",   "SGN",     "INT",    "ABS",     "USR",    "FRE",     "SCRN(",
+    "+",     "-",      "*",       "/",      "^",       "AND",    "OR",      ">",
+    "=",     "<",      "SGN",     "INT",    "ABS",     "USR",    "FRE",     "SCRN(",
     "PDL",   "POS",    "SQR",     "RND",    "LOG",     "EXP",    "COS",     "SIN",
     "TAN",   "ATN",    "PEEK",    "LEN",    "STR$",    "VAL",    "ASC",     "CHR$",
     "LEFT$", "RIGHT$", "MID$",    "ERROR",  "ERROR",   "ERROR",  "ERROR",   "ERROR",
@@ -70,7 +28,7 @@ export class ViewApplesoft {
     "ERROR", "ERROR",  "ERROR",   "ERROR",  "ERROR",   "ERROR",  "ERROR",   "ERROR"
   ]
 
-  static asHtml(data: Uint8Array): string {
+  static asText(data: Uint8Array, asHtml: boolean): string {
     let offset = 0
     let out = ""
 
@@ -81,8 +39,8 @@ export class ViewApplesoft {
       if (nextAddress == 0) {
         let extra = data.length - offset
         if (extra > 1) {
-          out += "<br>"
-          out += ViewBinaryDisasm.asHtml(data, 0x801, offset)
+          out += asHtml ? "<br>" : "\n"
+          out += ViewBinaryDisasm.asText(data, 0x801, offset, asHtml)
         }
         break
       }
@@ -93,7 +51,12 @@ export class ViewApplesoft {
         break
       }
 
-      out += `<span class="as-linenum">${lineNumber.toString()} </span>`
+      const lineNumStr = lineNumber.toString() + " "
+      if (asHtml) {
+        out += `<span class="as-linenum">${lineNumStr}</span>`
+      } else {
+        out += lineNumStr
+      }
 
       let inString = false
       let inComment = false
@@ -105,10 +68,22 @@ export class ViewApplesoft {
         }
         if (byte & 0x80) {
           let s = this.tokens[byte & 0x7f]
+          if (asHtml) {
+            if (s == "&") {
+              s = "&amp;"
+            } else if (s == "<") {
+              s = "&lt;"
+            } else if (s == ">") {
+              s = "&gt;"
+            }
+          }
           if (s == "REM") {
-            out += '<span class="as-comment"> REM '
+            if (asHtml) {
+              out += '<span class="as-comment">'
+            }
+            out += " REM "
             inComment = true
-          } else if (s.length > 1) {
+          } else if (s.length > 1 && asHtml) {
             out += `<span class="as-token"> ${s} </span>`
           } else {
             out += ` ${s} `
@@ -116,31 +91,91 @@ export class ViewApplesoft {
         } else {
           let s = String.fromCharCode(byte)
           if (s == ":") {
-            s = `<span class="as-colon">:</span>`
+            if (asHtml) {
+              s = `<span class="as-colon">:</span>`
+            } else {
+              s = ":"
+            }
           } else if (s == '"') {
             if (inString) {
-              s = '"</span>'
+              if (asHtml) {
+                s = '"</span>'
+              }
               inString = false
             } else {
               inString = true
-              s = '<span class="as-string">"'
+              if (asHtml) {
+                s = '<span class="as-string">"'
+              }
             }
-          } else if (s == "&") {
-            s = "&amp;"
-          } else if (s == "<") {
-            s = "&lt;"
-          } else if (s == ">") {
-            s = "&gt;"
+          } else if (asHtml) {
+            if (s == "&") {
+              s = "&amp;"
+            } else if (s == "<") {
+              s = "&lt;"
+            } else if (s == ">") {
+              s = "&gt;"
+            }
           }
           out += s
         }
       }
-      if (inComment) {
+      if (inComment && asHtml) {
         out += "</span>"
       }
-      out += "<br>"
+      out += asHtml ? "<br>" : "\n"
     }
 
+    return out
+  }
+}
+
+//------------------------------------------------------------------------------
+
+export class ViewMerlin {
+  static asText(data: Uint8Array, asHtml: boolean): string {
+    const tabStops = [9, 15, 26]
+    let offset = 0
+    let out = ""
+    let line = ""
+    let columnIndex = 0
+    while (offset < data.length) {
+      const byte = data[offset++]
+      if (byte == 0x8d) {
+        line += asHtml ? "<br>" : "\n"
+        out += line
+        line = ""
+        columnIndex = 0
+        continue
+      }
+      if (byte == 0xa0) {
+        columnIndex += 1
+        // if ';', force to last column
+        if (data[offset] == 0xbb) {
+          columnIndex = 3
+        }
+        if (columnIndex < 4) {
+          line = line.padEnd(tabStops[columnIndex - 1], " ")
+        } else {
+          line += " "
+        }
+        continue
+      }
+      let c = String.fromCharCode(byte & 0x7f)
+      if (asHtml) {
+        if (c == "&") {
+          c = "&amp;"
+        } else if (c == "<") {
+          c = "&lt;"
+        } else if (c == ">") {
+          c = "&gt;"
+        }
+      }
+      line += c
+    }
+    if (line != "") {
+      out += line
+    }
     return out
   }
 }
@@ -149,28 +184,48 @@ export class ViewApplesoft {
 
 export class ViewLisa2 {
 
+  public static asText(data: Uint8Array, asHtml: boolean): string {
+    const lisa2 = new ViewLisa2(data, asHtml)
+    return lisa2.convertText()
+  }
+
+  // from LISA P1.L
   static readonly tokens: string[] = [
-    "BGE", "BLT", "BMI", "BCC", "BCS", "BPL", "BNE", "BEQ",
+    "BGE", "BLT", "BMI", "BCC", "BCS", "BPL", "BNE", "BEQ",   // 0x80
     "BVS", "BVC", "BSB", "BNM", "BM1", "BNZ", "BIZ", "BIM",
-    "BIP", "BIC", "BNC", "BRA", "BTR", "BFL", "BRK", "BKS",
+    "BIP", "BIC", "BNC", "BRA", "BTR", "BFL", "BRK", "BKS",   // 0x90
     "CLV", "CLC", "CLD", "CLI", "DEX", "DEY", "INX", "INY",
-    "NOP", "PHA", "PLA", "PHP", "PLP", "RTS", "RTI", "RSB",
+    "NOP", "PHA", "PLA", "PHP", "PLP", "RTS", "RTI", "RSB",   // 0xA0
     "RTN", "SEC", "SEI", "SED", "TAX", "TAY", "TSX", "TXA",
-    "TXS", "TYA", "ADD", "CPR", "DCR", "INR", "SUB", "LDD",
+    "TXS", "TYA", "ADD", "CPR", "DCR", "INR", "SUB", "LDD",   // 0xB0
     "POP", "PPD", "STD", "STP", "LDR", "STO", "SET", "???",
-    "ADC", "AND", "ORA", "BIT", "CMP", "CPX", "CPY", "DEC",
+    "ADC", "AND", "ORA", "BIT", "CMP", "CPX", "CPY", "DEC",   // 0xC0
     "EOR", "INC", "JMP", "JSR", "???", "LDA", "LDX", "LDY",
-    "STA", "STX", "STY", "XOR", "LSR", "ROR", "ROL", "ASL",
+    "STA", "STX", "STY", "XOR", "LSR", "ROR", "ROL", "ASL",   // 0xD0
     "ADR", "EQU", "ORG", "OBJ", "EPZ", "STR", "DCM", "ASC",
-    "ICL", "END", "LST", "NLS", "HEX", "BYT", "HBY", "PAU",
-    "DFS", "DCI", "...", "PAG", "INV", "BLK", "DBY", "TTL",
-    "SBC", "???", "LET", ".IF", ".EL", ".FI", "=  ", "PHS",
-    "DPH", ".DA", "GEN", "NOG", "USR", "???", "???", "???"
+    "ICL", "END", "LST", "NLS", "HEX", "BYT", "HBY", "PAU",   // 0xE0
+    "DFS", "DCI", "FLT", "PAG", "INV", "BLK", "DBY", "TTL",
+    "SBC", "???", "LET", ".IF", ".EL", ".FI", "=  ", "PHS",   // 0xF0
+    "DPH", ".DA", "GEN", "NOG", "USR", "ENZ", "???", "???",
   ]
 
-  static asHtml(data: Uint8Array): string {
-    let offset = 0
+  private data: Uint8Array
+  private asHtml: boolean
+  private line: string = ""
+  private offset: number = 0
+  private endOffset: number = 0
+
+  private constructor(data: Uint8Array, asHtml: boolean) {
+    this.data = data
+    this.asHtml = asHtml
+  }
+
+  private convertText(): string {
+    // const tabStops = [9, 13, 29]
     let out = ""
+    this.offset = 0
+
+    // TODO: use these to check if file really is LISA
 
     // let version = data[offset] + (data[offset + 1] << 8)
     // offset += 2
@@ -178,49 +233,127 @@ export class ViewLisa2 {
     // let length = data[offset] + (data[offset + 1] << 8)
     // offset += 2
 
-    while (offset < data.length) {
-      let lineLength = data[offset]
-      offset += 1
+    while (this.offset < this.data.length) {
+      const lineLength = this.data[this.offset]
+      this.offset += 1
 
       if (lineLength == 0 || lineLength == 0xff) {
         break
       }
 
-      let line = ""
-      let byte = data[offset]
-      while (byte < 0x80) {
-        offset += 1
-        if (byte == 0x0d) {
-          break
-        }
-        line += String.fromCharCode(byte)
-        byte = data[offset]
+      if (this.offset + lineLength > this.data.length) {
+        // TODO: report overflow error
+        break
       }
-      line = line.padEnd(8, "\xa0")
 
-      if (byte != 0x0d) {
-        let count = 0
-        while (count++ < lineLength) {
-          byte = data[offset++]
-          if (byte == 0x0d) {
+      this.endOffset = this.offset + lineLength
+      this.convertLine()
+      this.offset = this.endOffset
+
+      out += this.line.trimEnd()
+      out += this.asHtml ? "<br>" : "\n"
+    }
+    return out
+  }
+
+  private convertLine() {
+
+    this.line = ""
+
+    let c = " "
+    let byte = this.data[this.offset]
+
+    if (byte < 0x80) {
+
+      this.addByte(byte)
+      c = String.fromCharCode(byte)
+
+      // comment line
+      if (c == "*" || c == ";") {
+        this.flushLine()
+        return
+      }
+
+      // label
+      if (c != " ") {
+        while (this.offset < this.endOffset) {
+          byte = this.data[this.offset]
+          if (byte == 0x0d || byte >= 0x80) {
             break
           }
-          if (byte >= 0x80) {
-            line += this.tokens[byte & 0x7f]
-          } else if (byte < 0x20) {
-            line += "\xa0"
-          } else {
-            line += String.fromCharCode(byte)
-          }
+          this.addByte(byte)
         }
       }
-      line = line.trimEnd()
-      line = escapeHtml(line)
-      out += line
-      out += "<br>"
     }
 
-    return out
+    if (this.line.length < 9) {
+      this.line = this.line.padEnd(9, " ")
+    } else {
+      this.line += " "
+    }
+
+    // next byte is token
+    byte = this.data[this.offset]
+    if (byte >= 0x80) {
+      this.offset += 1
+      this.line += ViewLisa2.tokens[byte & 0x7f]
+      this.line += " "
+      // addressing mode
+      byte = this.data[this.offset]
+      if (byte <= 0x20) {
+        this.offset += 1
+        while (this.offset < this.endOffset) {
+          byte = this.data[this.offset]
+          if (byte == 0x0d || byte >= 0x80) {
+            break
+          }
+          this.addByte(byte)
+        }
+      }
+    } else {
+      // TODO: report missing token
+    }
+
+    byte = this.data[this.offset]
+    if (byte == 0x0d) {
+      return
+    }
+    if (byte == 0xBB) {   // ';' | 0X80
+      if (this.line.length < 29) {
+        this.line = this.line.padEnd(29, " ")
+      } else {
+        this.line += " "
+      }
+      this.line += ";"
+      this.offset += 1
+    }
+
+    this.flushLine()
+  }
+
+  private flushLine() {
+    while (this.offset < this.endOffset) {
+      const byte = this.data[this.offset]
+      if (byte == 0x0d || byte >= 0x80) {
+        break
+      }
+      this.addByte(byte)
+    }
+  }
+
+  private addByte(byte: number) {
+    let c = String.fromCharCode(byte)
+    if (this.asHtml) {
+      if (c == "&") {
+        c = "&amp;"
+      } else if (c == "<") {
+        c = "&lt;"
+      } else if (c == ">") {
+        c = "&gt;"
+      }
+    }
+    this.line += c
+    this.offset += 1
   }
 }
 
@@ -229,10 +362,10 @@ export class ViewLisa2 {
 export class ViewInteger {
 
   static readonly tokens: string[] = [
-    "HIMEM:", "<EOL>",  "_",       ":",      "LOAD",  "SAVE",  "CON",    "RUN",
-    "RUN",    "DEL",   ", ",       "NEW",    "CLR",   "AUTO",  ",",      "MAN",
-    "HIMEM:", "LOMEM:", "+",       "-",      "*",     "&#x2F;","=",      "#",
-    "&gt;=",  "&gt;",   "&lt;=",  "&lt;&gt;","&lt;",  "AND",   "OR",     "MOD",
+    "HIMEM:", "EOL",    "_",       ":",      "LOAD",  "SAVE",  "CON",    "RUN",
+    "RUN",    "DEL",    ", ",      "NEW",    "CLR",   "AUTO",  ",",      "MAN",
+    "HIMEM:", "LOMEM:", "+",       "-",      "*",     "/",     "=",      "#",
+    ">=",     ">",      "<=",      "<>",     "<",     "AND",   "OR",     "MOD",
     "^",      "+",      "(",       ",",      "THEN",  "THEN",  ",",      ",",
     "\"",     "\"",     "(",       "!",      "!",     "(",     "PEEK",   "RND",
     "SGN",    "ABS",    "PDL",     "RNDX",   "(",     "+",     "-",      "NOT",
@@ -247,7 +380,7 @@ export class ViewInteger {
     "NODSP",  "NODSP",  "NOTRACE", "DSP",    "DSP",   "TRACE", "PR#",    "IN#"
   ]
 
-  static asHtml(data: Uint8Array): string {
+  static asText(data: Uint8Array, asHtml: boolean): string {
     let offset = 0
     let out = ""
 
@@ -259,25 +392,32 @@ export class ViewInteger {
       let lineNumber = data[offset + 0] + (data[offset + 1] << 8)
       offset += 2
 
-      out += `<span class="as-linenum">${lineNumber.toString().padStart(5, "\xa0")}</span>`
+      const lineNumStr = lineNumber.toString().padStart(5, " ")
+      if (asHtml) {
+        out += `<span class="as-linenum">${lineNumStr}</span>`
+      } else {
+        out += lineNumStr
+      }
 
       let wasToken = true
       while (true) {
         let byte = data[offset]
         if (byte == 0x01) {
           offset += 1
-          out += "<br>"
+          out += asHtml ? "<br>" : "\n"
           break
         }
 
         let isToken = (byte < 0x80) && (this.tokens[byte].length > 1)
         if (wasToken && !isToken) {
-          out += "\xa0"
+          out += " "
         }
         wasToken = isToken
 
         if (byte == 0x28) {  // opening quote token
-          out += '<span class="as-string">"'
+          if (asHtml) {
+            out += '<span class="as-string">"'
+          }
           offset += 1
           while (offset < data.length) {
             byte = data[offset]
@@ -288,27 +428,36 @@ export class ViewInteger {
             // TODO: filter out control characters?
             out += String.fromCharCode(byte & 0x7f)
           }
-          out += '"</span>'
-        } else if (byte == 0x5d) {
+          if (asHtml) {
+            out += '"</span>'
+          }
+        } else if (byte == 0x5d) {  // REM token
           offset += 1
-          out += '<span class="as-comment"> REM '
+          if (asHtml) {
+            out += '<span class="as-comment">'
+          }
+          out += ' REM '
           while (offset < data.length) {
             byte = data[offset]
-            if (byte == 0x01) {  // end of line
+            if (byte == 0x01) {  // end of line token
               break
             }
             offset += 1
-            let char = String.fromCharCode(byte & 0x7f)
-            if (char == "&") {
-              char = "&amp;"
-            } else if (char == "<") {
-              char = "&lt;"
-            } else if (char == ">") {
-              char = "&gt;"
+            let c = String.fromCharCode(byte & 0x7f)
+            if (asHtml) {
+              if (c == "&") {
+                c = "&amp;"
+              } else if (c == "<") {
+                c = "&lt;"
+              } else if (c == ">") {
+                c = "&gt;"
+              }
             }
-            out += char
+            out += c
           }
-          out += '"</span>'
+          if (asHtml) {
+            out += '</span>'
+          }
         } else if (byte >= 0xb0 && byte <= 0xb9) {
           offset += 1
           let value = data[offset + 0] + (data[offset + 1] << 8)
@@ -329,13 +478,32 @@ export class ViewInteger {
         } else if (byte < 0x80) {
           offset += 1
           if (byte == 0x03) {
-            out += `<span class="as-colon">:</span>`
+            if (asHtml) {
+              out += '<span class="as-colon">:</span>'
+            } else {
+              out += ':'
+            }
           } else {
             let token = this.tokens[byte]
             if (token.length > 1) {
-              out += "\xa0"
+              out += " "
             }
-            out += `<span class="as-token">${token}</span>`
+            if (asHtml) {
+              if (token == ">= ") {
+                token = "&gt;= "
+              } else if (token == ">") {
+                token = "&gt;"
+              } else if (token == "<= ") {
+                token = "&lt;= "
+              } else if (token == "<> ") {
+                token = "&lt;&gt; "
+              } else if (token == "<") {
+                token = "&lt;"
+              }
+              out += `<span class="as-token">${token}</span>`
+            } else {
+              out += token
+            }
           }
         } else {
           console.log("Unkown token 0x" + byte.toString(16))
@@ -352,10 +520,11 @@ export class ViewInteger {
 //------------------------------------------------------------------------------
 
 export class ViewText {
-  static asHtml(data: Uint8Array, padSource: boolean): string {
+  static asText(data: Uint8Array, padSource: boolean, asHtml: boolean): string {
+    const tabStops = [16, 20, 40]
     let out = ""
     let line = ""
-    const tabStops = [16, 20, 40]
+
     for (let i = 0; i < data.length; i += 1) {
       if ((data[i] & 0x7f) == 0x0d) {
         if (padSource) {
@@ -367,7 +536,7 @@ export class ViewText {
               let columnIndex = 0
               while (line != "") {
                 if (line[0] == ";") {
-                  paddedLine = paddedLine.padEnd(tabStops[2], "\xa0")
+                  paddedLine = paddedLine.padEnd(tabStops[2], " ")
                   paddedLine += line
                   break
                 }
@@ -381,9 +550,9 @@ export class ViewText {
                 }
                 line = line.substring(pos + 1)
                 if (paddedLine.length < tabStops[columnIndex] - 1) {
-                  paddedLine = paddedLine.padEnd(tabStops[columnIndex] - 1, "\xa0")
+                  paddedLine = paddedLine.padEnd(tabStops[columnIndex] - 1, " ")
                 }
-                paddedLine += "\xa0"
+                paddedLine += " "
                 columnIndex += 1
                 if (columnIndex == tabStops.length) {
                   paddedLine += line
@@ -396,22 +565,24 @@ export class ViewText {
         }
         out += line
         line = ""
-        out += "<br>"
+        out += asHtml ? "<br>" : "\n"
       } else {
         let char = String.fromCharCode(data[i] & 0x7f)
-        if (char == "&") {
-          char = "&amp;"
-        } else if (char == "<") {
-          char = "&lt;"
-        } else if (char == ">") {
-          char = "&gt;"
+        if (asHtml) {
+          if (char == "&") {
+            char = "&amp;"
+          } else if (char == "<") {
+            char = "&lt;"
+          } else if (char == ">") {
+            char = "&gt;"
+          }
         }
         line += char
       }
     }
     if (line != "") {
       out += line
-      out += "<br>"
+      out += asHtml ? "<br>" : "\n"
     }
     return out
   }
@@ -420,16 +591,22 @@ export class ViewText {
 //------------------------------------------------------------------------------
 
 export class ViewBinaryHex {
-  static asHtml(data: Uint8Array, address: number): string {
+  static asText(data: Uint8Array, address: number, asHtml: boolean): string {
     let out = ""
     let line = ""
+
     let offset = 0
     let startOffset = 0
     while (offset < data.length) {
       if (line == "") {
-        line = `<span class="bin-addr">${(address + offset).toString(16).toUpperCase().padStart(4, "0")}:</span>`
+        const addrStr = (address + offset).toString(16).toUpperCase().padStart(4, "0")
+        if (asHtml) {
+          line = `<span class="bin-addr">${addrStr}:</span>`
+        } else {
+          line = addrStr
+        }
       }
-      line += "\xa0" + data[offset].toString(16).toUpperCase().padStart(2, "0")
+      line += " " + data[offset].toString(16).toUpperCase().padStart(2, "0")
       offset += 1
       if ((offset & 0xf) == 0) {
         if (line != "") {
@@ -451,12 +628,14 @@ export class ViewBinaryHex {
 
             if (byte >= 0x20) {
               let char = String.fromCharCode(byte)
-              if (char == "&") {
-                char = "&amp;"
-              } else if (char == "<") {
-                char = "&lt;"
-              } else if (char == ">") {
-                char = "&gt;"
+              if (asHtml) {
+                if (char == "&") {
+                  char = "&amp;"
+                } else if (char == "<") {
+                  char = "&lt;"
+                } else if (char == ">") {
+                  char = "&gt;"
+                }
               }
               asciiStr += char
             } else {
@@ -464,13 +643,15 @@ export class ViewBinaryHex {
             }
           }
           startOffset = offset
-          out += `${line}    ${asciiStr}<br>`
+          out += `${line}    ${asciiStr}`
+          out += asHtml ? "<br>" : "\n"
           line = ""
         }
       }
     }
     if (line != "") {
-      out += line + "<br>"
+      out += line
+      out += asHtml ? "<br>" : "\n"
     }
     return out
   }
@@ -478,12 +659,18 @@ export class ViewBinaryHex {
 
 
 export class ViewBinaryDisasm {
-  static asHtml(data: Uint8Array, address: number, startOffset = 0): string {
+  static asText(data: Uint8Array, address: number, startOffset: number, asHtml: boolean): string {
     let out = ""
     let offset = startOffset
+
     while (offset < data.length) {
-      out += `<span class="bin-addr">${(address + offset).toString(16).toUpperCase().padStart(4, "0")}:</span>`
-      let opByte = data[offset]
+      const addrStr = (address + offset).toString(16).toUpperCase().padStart(4, "0") + ":"
+      if (asHtml) {
+        out += `<span class="bin-addr">${addrStr}</span>`
+      } else {
+        out += addrStr
+      }
+      const opByte = data[offset]
       let opLength = Isa6502.ops[opByte].bc
       let opcode: string
       let opArgs: string
@@ -497,18 +684,19 @@ export class ViewBinaryDisasm {
         opArgs = ""
       }
 
-      out += "\xa0"
+      out += " "
       for (let i = 0; i < 3; i += 1) {
         if (i < opLength) {
           let value = data[offset + i]
-          out += "\xa0"
+          out += " "
           out += value.toString(16).padStart(2, "0").toUpperCase()
         } else {
-          out += "\xa0\xa0\xa0"
+          out += "   "
         }
       }
 
-      out += `\xa0\xa0\xa0\xa0${opcode}\xa0\xa0\xa0${opArgs}<br>`
+      out += `    ${opcode}   ${opArgs}`
+      out += asHtml ? "<br>" : "\n"
       offset += opLength
     }
     return out

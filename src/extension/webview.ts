@@ -36,15 +36,15 @@ class Webview implements IMachineDisplay, IHostHooks {
           this.displayView.update(false)
           //*** look at body.editable flag ***
         } else if (body.type == "BAS") {
-          topDiv.innerHTML = ViewApplesoft.asHtml(dataBytes)
+          topDiv.innerHTML = ViewApplesoft.asText(dataBytes, true)
         } else if (body.type == "INT") {
-          topDiv.innerHTML = ViewInteger.asHtml(dataBytes)
+          topDiv.innerHTML = ViewInteger.asText(dataBytes, true)
         } else if (body.type == "TXT") {
-          topDiv.innerHTML = ViewText.asHtml(dataBytes, false)
+          topDiv.innerHTML = ViewText.asText(dataBytes, false, true)
         } else if (body.type == "LST") {
-          topDiv.innerHTML = ViewBinaryDisasm.asHtml(dataBytes, body.auxType)
+          topDiv.innerHTML = ViewBinaryDisasm.asText(dataBytes, body.auxType, 0, true)
         } else { // if (body.type == "BIN")
-          topDiv.innerHTML = ViewBinaryHex.asHtml(dataBytes, body.auxType)
+          topDiv.innerHTML = ViewBinaryHex.asText(dataBytes, body.auxType, true)
         }
         break
       }

@@ -1,6 +1,6 @@
 
 import { DiskImage, SectorData } from "./disk_image"
-import { FileEntry, ProdosFileType, DiskFullError } from "./prodos"
+import { FileEntry, FileType, DiskFullError } from "./prodos"
 
 // import { Dos33NoDosImage, Dos33Image } from "./dos33_image"
 
@@ -114,7 +114,7 @@ export class Dos33FileEntry implements FileEntry {
   private data: Uint8Array
 
   protected _name?: string
-  protected _type?: string
+  protected _type?: FileType
 
   protected _auxType: number = 0
   protected byteLength: number = 0
@@ -123,10 +123,10 @@ export class Dos33FileEntry implements FileEntry {
     this.volume = volume
     this.data = sector.data.subarray(offset, offset + 0x23)
     if (readExtra) {
-      if (this.type == "B" || this.type == "A" || this.type == "I") {
+      if (this.type == FileType.BIN || this.type == FileType.BAS || this.type == FileType.INT) {
         const tsList = this.volume.readTrackSector(this.tslTrack, this.tslSector)
         const sector = this.volume.readTrackSector(tsList.data[0x0C], tsList.data[0x0D])
-        if (this.type == "B") {
+        if (this.type == FileType.BIN) {
           this._auxType = sector.data[0] + (sector.data[1] << 8)
           this.byteLength = sector.data[2] + (sector.data[3] << 8)
         } else {
@@ -138,13 +138,13 @@ export class Dos33FileEntry implements FileEntry {
     }
   }
 
-  initialize(fileName: string, typeByte: ProdosFileType, auxType: number) {
+  initialize(fileName: string, type: FileType, auxType: number) {
     // default everything to zero
     for (let i = 0; i < 0x23; i += 1) {
       this.data[i] = 0
     }
     this.name = fileName
-    this.typeByte = typeByte
+    this.type = type
     this.auxType = auxType
   }
 
@@ -177,19 +177,52 @@ export class Dos33FileEntry implements FileEntry {
     this._name = value
   }
 
-  public get type() {
+  public get type(): FileType {
     // *** TODO: catch value with multiple bits set? ***
     if (!this._type) {
       let index = 0
-      let value = this.typeByte
+      let value = this.typeByte & 0x7F
       // *** mask instead ***
       while (value != 0) {
         index += 1
         value >>= 1
       }
-      this._type = "TIABSRXY?"[index]
+      const types: FileType[] = [
+        FileType.TXT,
+        FileType.INT,
+        FileType.BAS,
+        FileType.BIN,
+        FileType.S,
+        FileType.REL,
+        FileType.X,
+        FileType.Y
+      ]
+      this._type = types[index]
     }
     return this._type
+  }
+
+  private set type(t: FileType) {
+    let b = 0
+    if (t == FileType.TXT) {
+      b = 0x00
+    } else if (t == FileType.INT) {
+      b = 0x01
+    } else if (t == FileType.BAS) {
+      b = 0x02
+    } else if (t == FileType.BIN) {
+      b = 0x04
+    } else if (t == FileType.S) {
+      b = 0x08
+    } else if (t == FileType.REL) {
+      b = 0x10
+    } else if (t == FileType.X) {
+      b = 0x20
+    } else if (t == FileType.Y) {
+      b = 0x40
+    }
+    this.typeByte = b
+    this._type = t
   }
 
   public get auxType() {
@@ -235,7 +268,7 @@ export class Dos33FileEntry implements FileEntry {
     return this.data[0x02] & 0x7F
   }
 
-  public set typeByte(value: number) {
+  private set typeByte(value: number) {
     this._type = undefined
     // *** throw on bad values? ***
     this.data[0x02] = (value & 0x7F) | (this.data[0x02] & 0x80)
@@ -270,7 +303,7 @@ export class Dos33VolFileEntry extends Dos33FileEntry {
     const sector = { track: 0, index: 9, data: new Uint8Array(0x27) }
     super(volume, sector, 0)
     this._name = ""
-    this._type = "DIR"
+    this._type = FileType.DIR
   }
 }
 
@@ -437,14 +470,7 @@ export class Dos33Volume {
     }
   }
 
-  public preprocessName(name: string): string {
-    name = name.toUpperCase()
-    // *** do a truncate to 31? ***
-    return name
-  }
-
-  // *** ProdosFileType doesn't work here ***
-  public createFile(parent: FileEntry, fileName: string, type: ProdosFileType, auxType: number): FileEntry {
+  public createFile(parent: FileEntry, fileName: string, type: FileType, auxType: number): FileEntry {
 
     // TODO: validate/limit fileName *** also done in set name ***
 
@@ -452,7 +478,7 @@ export class Dos33Volume {
     return this.allocateFile(<Dos33FileEntry>parent, fileName, type, auxType)
   }
 
-  private allocateFile(parent: Dos33FileEntry, fileName: string, type: ProdosFileType, auxType: number): FileEntry {
+  private allocateFile(parent: Dos33FileEntry, fileName: string, type: FileType, auxType: number): FileEntry {
     const fileEntry = this.allocFileEntry(parent)
     fileEntry.initialize(fileName, type, auxType)
 
@@ -568,20 +594,27 @@ export class Dos33Volume {
       let copySize = sector.data.length
       let srcOffset = 0
       if (length == 0) {
-        if (fileEntry.type == "B" || fileEntry.type == "Y") {
-          // TODO: maybe no address for Y type file?
+        // files that contain with addresses
+        if (fileEntry.type == FileType.BIN || fileEntry.type == FileType.Y) {
+          // NOTE: Y (aka "New B") files are used by the LISA assembler,
+          //  where the auxType appears to be the load address
           fileEntry.auxType = sector.data[srcOffset + 0] + ((sector.data[srcOffset + 1]) << 8)
           srcOffset += 2
           copySize -= 2
         }
-        if (fileEntry.type.match(/[BAIY]/)) {
+        // files that contain lengths
+        if (fileEntry.type == FileType.BIN
+            || fileEntry.type == FileType.BAS
+            || fileEntry.type == FileType.INT
+            || fileEntry.type == FileType.Y) {
+          // NOTE: Y files when used by LISA assembler appear to always have 0 here
           length = sector.data[srcOffset + 0] + ((sector.data[srcOffset + 1]) << 8)
           srcOffset += 2
           copySize -= 2
         }
       }
       let inData = Array.from(sector.data)
-      if (fileEntry.type == "T") {
+      if (fileEntry.type == FileType.TXT) {
         for (let i = 0; i < copySize; i += 1) {
           if (inData[i] == 0) {
             outData = outData.concat(inData.slice(0, i))
@@ -647,12 +680,15 @@ export class Dos33Volume {
     let fileEntry = entry as Dos33FileEntry
 
     const header: number[] = []
-    if (fileEntry.type == "B" || fileEntry.type == "Y") {
+    if (fileEntry.type == FileType.BIN || fileEntry.type == FileType.Y) {
       // TODO: maybe no address for Y type file?
       header.push(fileEntry.auxType & 0xff)
       header.push((fileEntry.auxType >> 8) & 0xff)
     }
-    if (fileEntry.type.match(/[BAIY]/)) {
+    if (fileEntry.type == FileType.BIN
+        || fileEntry.type == FileType.BAS
+        || fileEntry.type == FileType.INT
+        || fileEntry.type == FileType.Y) {
       header.push(contents.length & 0xff)
       header.push((contents.length >> 8) & 0xff)
     }

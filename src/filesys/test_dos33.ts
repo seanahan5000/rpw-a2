@@ -1,7 +1,7 @@
 
 import { DiskImage, SectorData } from "./disk_image"
 import { Dos33VTOC, Dos33Volume, Dos33FileEntry, Dos33VolFileEntry } from "./dos33"
-import { ProdosFileType } from "./prodos"
+import { FileType } from "./prodos"
 
 enum SectorState {
   FREE = 0,
@@ -146,44 +146,33 @@ export class VerifiedDos33Volume extends Dos33Volume {
     let tslTrack = fileEntry.tslTrack
     let tslSector = fileEntry.tslSector
     const pairsPerTsl = vtoc.tsPairsPerSector
-    let index = 0
+    let sectorCount = 0
+
     while (true) {
       const tsList = this.refReadTrackSector(tslTrack, tslSector)
-      index += 1
+      sectorCount += 1
       for (let i = 0; i < pairsPerTsl; i += 1) {
-        //*** TODO: this isn't working here
-        //  EDASM.OBJ catalog entry says it's 7 (0x600 + TSList) sectors long,
-        //  but the file itself says it's 0x66c bytes long
-        //
-        // if (index == fileEntry.sectorLength) {
-        //   return
-        // }
         const t = tsList.data[0x0c + i * 2]
         const s = tsList.data[0x0d + i * 2]
-        const sector = this.refReadTrackSector(t, s)
-        index += 1
-
-        // *** first first sector read
-          // *** depending on file type
-            // *** extract and possibly address
-
-        // *** check file length against sector length ***
-
-        // *** should warn on non-zero tsl entries after past sector count
-
-        // //*** TODO: reconcile with comment above
-        if (index == fileEntry.sectorLength) {
-          return
+        if (t != 0 || s != 0) {
+          const sector = this.refReadTrackSector(t, s)
+          sectorCount += 1
         }
       }
       tslTrack = tsList.data[0x01]
       tslSector = tsList.data[0x02]
       if (tslTrack == 0 && tslSector == 0) {
-        //*** ran out of track/sectors
-        // *** is this bad?
         break
       }
     }
+
+    // EDASM.OBJ catalog entry says it's 7 (0x600 + TSList) sectors long,
+    //  but the file itself says it's 0x66c bytes long
+
+    // IMPROVED CATALOG has a sectorLength of 0
+
+    this.checkWarn(sectorCount == fileEntry.sectorLength,
+      `${fileEntry.name} sector count ${fileEntry.sectorLength} doesn't match observed count ${sectorCount}`)
   }
 
   private refReadTrackSector(t: number, s: number): SectorData {
@@ -233,7 +222,7 @@ function testDos33() {
   const diskImage = new DiskImage("dsk", new Uint8Array(35 * 16 * 256), false)
   const volume = new VerifiedDos33Volume(diskImage, true)
   const parent = new Dos33VolFileEntry(volume)
-  const file = volume.createFile(parent, "TEST_FILE", <ProdosFileType>0x04/*ProdosFileType.BIN*/, 0x2000)
+  const file = volume.createFile(parent, "TEST_FILE", FileType.BIN, 0x2000)
   let direction = 1
   let fileSize = 0x100
   // *** binary files cap at 64K, others dont? ***

@@ -2,15 +2,30 @@ import * as fs from 'fs'
 import * as vscode from 'vscode'
 import * as path from 'path'
 import { DiskImage, TwoMGHeader } from "../filesys/disk_image"
-import { FileEntry, ProdosVolume, ProdosFileType, ProdosFileEntry } from "../filesys/prodos"
+import { FileEntry, ProdosVolume, ProdosFileEntry, FileType } from "../filesys/prodos"
 import { Dos33Volume } from '../filesys/dos33'
 
 import { VerifiedProdosVolume } from "../filesys/test_prodos"
 import { VerifiedDos33Volume } from "../filesys/test_dos33"
+import { ViewMerlin, ViewLisa2 } from '../data_viewers'
 
-// *** mark volumes that fail validation as read-only ***
+// TODO: maybe not update modTime is causing VSCode multi-volume weirdness?
+// TODO: mark volumes that fail validation as read-only
+
+//------------------------------------------------------------------------------
 
 type Volume = Dos33Volume | ProdosVolume
+
+type FileCacheEntry = {
+  fileData: Uint8Array,
+  convertedData: Uint8Array
+}
+
+type FileInfo = {
+  name: string,
+  type: FileType,
+  auxType: number
+}
 
 //------------------------------------------------------------------------------
 
@@ -37,8 +52,8 @@ class FileDiskImage extends DiskImage {
 
 function createVolume(volumeUri: vscode.Uri, isReadOnly: boolean): Volume {
 
-  // *** make this a setting ***
-  let verifiedVolume = true
+  const config = vscode.workspace.getConfiguration("rpwa2.filesystem")
+  const verifiedVolume = config.get<boolean>("verify", true)
 
   const pathName = volumeUri.path
   let volumeName = path.posix.basename(volumeUri.path)
@@ -114,6 +129,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
   }
 
   private fireSoon(...events: vscode.FileChangeEvent[]): void {
+    // TODO: option to fire immediately -- at least for testing?
     this.bufferedEvents.push(...events)
     if (this.fireSoonTimer) {
       clearTimeout(this.fireSoonTimer)
@@ -130,7 +146,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       const volumeUri = vscode.Uri.parse(uri.query)
       volume = this.volumes.get(volumeUri.path)
       if (!volume) {
-        // TODO: get readOnly state from actual file?
+        // TODO: get readOnly state from actual image file?
         const isReadOnly = false
         volume = createVolume(volumeUri, isReadOnly)
         this.volumes.set(volumeUri.path, volume)
@@ -146,22 +162,23 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       const parentDir = this.mustFindParentDir(volume, uri)
       const file = this.mustFindFileOrDir(volume, parentDir, uri)
 
-      // *** TODO: get time information from actual files ***
+      // TODO: get time information from actual files
       const ctime = Date.now()
       const mtime = Date.now()
       let size = 0
-      if (file.type == "DIR") {
+      if (file.type == FileType.DIR) {
         return { type: vscode.FileType.Directory, ctime, mtime, size }
       } else {
         const contents = file.getContents()
-        return { type: vscode.FileType.File, ctime, mtime, size: contents.length }
+        const fileStat: vscode.FileStat = { type: vscode.FileType.File, ctime, mtime, size: contents.length }
+        // NOTE: Using fileStat.permissions = vscode.FilePermission.Readonly
+        //  her is too restrictive prevents deleting/moving files, in addition
+        //  to preventing editing.
+        return fileStat
       }
     } catch (e: any) {
       volume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("stat failed - " + e.message)
+      throw e
     }
   }
 
@@ -173,7 +190,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       const entries: [string, vscode.FileType][] = []
       volume.forEachAllocatedFile(dir, (fileEntry: FileEntry) => {
         const fileName = this.getFullFileName(fileEntry)
-        if (fileEntry.type == "DIR") {
+        if (fileEntry.type == FileType.DIR) {
           entries.push([fileName, vscode.FileType.Directory])
         } else {
           entries.push([fileName, vscode.FileType.File])
@@ -184,26 +201,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       return entries
     } catch (e: any) {
       volume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("readDirectory failed - " + e.message)
-    }
-  }
-
-  public async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    let volume: Volume | undefined
-    try {
-      volume = this.getVolume(uri)
-      const file = this.mustFindFile(volume, uri)
-      return volume.getFileContents(file)
-      // *** convert data from Merlin/LISA to text? ***
-    } catch (e: any) {
-      volume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("readFile failed - " + e.message)
+      throw e
     }
   }
 
@@ -223,7 +221,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       }
 
       const baseName = path.posix.basename(uri.path)
-      volume.createFile(parentDir, baseName, ProdosFileType.DIR, 0x0000)
+      volume.createFile(parentDir, baseName, FileType.DIR, 0x0000)
       volume.commitChanges()
 
       const dirName = uri.with({ path: path.posix.dirname(uri.path) })
@@ -233,41 +231,128 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       )
     } catch (e: any) {
       volume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
+      throw e
+    }
+  }
+
+  public async readFile(uri: vscode.Uri): Promise<Uint8Array> {
+    let volume: Volume | undefined
+    try {
+      volume = this.getVolume(uri)
+      const file = this.mustFindFile(volume, uri)
+      const fileData = volume.getFileContents(file)
+      const config = vscode.workspace.getConfiguration("rpwa2.filesystem.convert")
+
+      let convertedData: Uint8Array | undefined
+      if (file.type == FileType.TXT) {
+        if (file.name.toUpperCase().endsWith(".S")) {
+          if (config.get<boolean>("merlin", true)) {
+            const newStr = ViewMerlin.asText(fileData, false)
+            const utf8Encode = new TextEncoder()
+            convertedData = utf8Encode.encode(newStr)
+          }
+        } else {
+          if (config.get<boolean>("txt", true)) {
+            convertedData = new Uint8Array(fileData.length)
+            for (let i = 0; i < fileData.length; i += 1) {
+              // TODO: mask instead of flip high bits?
+              convertedData[i] = fileData[i] ^ 0x80
+            }
+          }
+        }
+      } else if (file.type == FileType.Y && file.auxType == 0x1800) {
+        if (config.get<boolean>("lisa2", true)) {
+          const newStr = ViewLisa2.asText(fileData, false)
+          const utf8Encode = new TextEncoder()
+          convertedData = utf8Encode.encode(newStr)
+        }
       }
-      throw vscode.FileSystemError.NoPermissions("createDirectory failed - " + e.message)
+
+      let fileCache: Map<string, FileCacheEntry> = (volume as any).fileCache
+      if (convertedData) {
+        if (!fileCache) {
+          fileCache = new Map<string, FileCacheEntry>();
+          (volume as any).fileCache = fileCache
+        }
+        fileCache.set(uri.path, { fileData, convertedData })
+        return convertedData
+      } else {
+        fileCache?.delete(uri.path)
+        return fileData
+      }
+    } catch (e: any) {
+      volume?.revertChanges()
+      throw e
     }
   }
 
   public writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean; }): void | Thenable<void> {
-    // *** make sure converted files aren't being written ***
+
+    // TODO: could NoPermissions handle disk full?
+
     let volume: Volume | undefined
     try {
       volume = this.getVolume(uri)
       const parentDir = this.mustFindParentDir(volume, uri)
       let file = this.mayFindFileOrDir(volume, parentDir, uri)
       if (file) {
-        if (file.type == "DIR") {
+        if (file.type == FileType.DIR) {
           throw vscode.FileSystemError.FileIsADirectory(uri)
         }
         if (options.overwrite) {
-          // TODO: check for same file type?
+
+          // for now, only allow writing .PIC files
+          if (!uri.path.toUpperCase().endsWith(".PIC")) {
+            throw Error("Write of read-only file attempted")
+          }
+
           volume.setFileContents(file, content)
           volume.commitChanges()
+          uri = this.renameUri(uri, file)
+          // TODO: fire a deleted/created instead?
         } else {
           throw vscode.FileSystemError.FileExists(uri)
         }
       } else if (options.create) {
-        const baseName = path.posix.basename(uri.path)
-        // TODO: what should default type and auxType be?
-        file = volume.createFile(parentDir, baseName, ProdosFileType.BIN, 0x2000)
-        // TODO: for now, force new empty file to be HIRES .PIC
+
+        // NOTE: Undo on a file delete will call here to recreate the file,
+        //  so allow writing of fileData if the contents matches known
+        //  converted data cached on file read.
+
+        const fileCache: Map<string, FileCacheEntry> = (volume as any).fileCache
+        const cacheEntry = fileCache?.get(uri.path)
+        if (cacheEntry) {
+          // compare contents against cached convertedData
+          let match = false
+          if (cacheEntry.convertedData.length == content.length) {
+            match = true
+            for (let i = 0; i < content.length; i += 1) {
+              if (cacheEntry.convertedData[i] != content[i]) {
+                match = false
+                break
+              }
+            }
+          }
+          if (!match) {
+            throw Error("Writing data of unknown source")
+          }
+          content = cacheEntry.fileData
+        }
+
+        const fileInfo = this.getCleanFileName(volume, uri)
+
+        // an empty file is assumed to be a .PIC
         if (content.length == 0) {
           content = new Uint8Array(0x1ff8)
+          fileInfo.type = FileType.BIN
+          fileInfo.auxType = 0x2000
         }
+
+        file = volume.createFile(parentDir, fileInfo.name, fileInfo.type, fileInfo.auxType)
         volume.setFileContents(file, content)
         volume.commitChanges()
+
+        uri = this.renameUri(uri, file)
         this.fireSoon({ type: vscode.FileChangeType.Created, uri })
       } else {
         throw vscode.FileSystemError.FileNotFound(uri)
@@ -276,10 +361,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       this.fireSoon({ type: vscode.FileChangeType.Changed, uri })
     } catch (e: any) {
       volume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("writeFile failed - " + e.message)
+      throw e
     }
   }
 
@@ -296,6 +378,8 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       volume.deleteFile(parentDir, file, options.recursive)
       volume.commitChanges()
 
+      // TODO: force rescan of directory so delete files are removed
+
       const dirName = uri.with({ path: path.posix.dirname(uri.path) })
       this.fireSoon(
         { type: vscode.FileChangeType.Changed, uri: dirName },
@@ -303,10 +387,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       )
     } catch (e: any) {
       volume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("delete failed - " + e.message)
+      throw e
     }
   }
 
@@ -325,7 +406,8 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       const oldFile = this.mustFindFileOrDir(oldVolume, oldParentDir, oldUri)
 
       const newDirName = this.getDirName(newUri)
-      let newName = path.posix.basename(newUri.path)
+      const newInfo = this.getCleanFileName(newVolume, newUri)
+      let newName = newInfo.name
 
       // move/rename file within volume
       if (newVolume == oldVolume) {
@@ -333,8 +415,6 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         // is path the same for both old and new?
         if (oldDirName == newDirName) {
           // simple rename
-          // *** user direct edit -- throw errors
-          // *** deal with special suffixes ***
           oldVolume.renameFile(oldParentDir, oldFile, newName)
         } else {
           if (oldVolume instanceof Dos33Volume) {
@@ -348,40 +428,20 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         }
       } else {
         // move a file/directory from one volume to another
-        if (oldFile.type == "DIR") {
+        if (oldFile.type == FileType.DIR) {
 
           if (newVolume instanceof Dos33Volume) {
             throw new Error("Not allowed on a Dos 3.3 volume")
           }
           const newFile = <ProdosFileEntry>this.mustFindParentDir(newVolume, newUri)
           newVolume.copyDir(newFile, <ProdosVolume>oldVolume, <ProdosFileEntry>oldFile)
-
         } else {
-          // *** deal with special suffixes? ***
-
-          const n = newName.lastIndexOf("_")
-          if (n > 0) {
-            // strip off special suffixes
-            newName = newName.substring(0, n)
-          }
-
-          newName = newVolume.preprocessName(newName)
-          // *** does new truncated name already exist? will createFile catch? ***
 
           const oldContents = oldFile.getContents()
           const newParentDir = this.mustFindParentDir(newVolume, newUri)
-
-          // *** convert oldFile.type between DOS 3.3 and Prodos type/auxType? ***
-
-          let newFileType = ProdosFileType.BIN
-          if (oldFile.type == "A" || oldFile.type == "BAS") {
-            newFileType = ProdosFileType.BAS
-          } else if (oldFile.type == "T" || oldFile.type == "TXT") {
-            newFileType = ProdosFileType.TXT
-          }
-
-          const newFile = newVolume.createFile(newParentDir, newName, newFileType, oldFile.auxType)
+          const newFile = newVolume.createFile(newParentDir, newName, oldFile.type, oldFile.auxType)
           newFile.setContents(oldContents)
+          newUri = this.renameUri(newUri, newFile)
         }
 
         oldVolume.deleteFile(oldParentDir, oldFile, true)
@@ -398,13 +458,12 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     } catch (e: any) {
       newVolume?.revertChanges()
       oldVolume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("rename failed - " + e.message)
+      throw e
     }
   }
 
+  // NOTE: The destination uri always has " copy" appended to the name
+  //  even if there's no existing file at the destination.
   public copy(source: vscode.Uri, destination: vscode.Uri, options: { readonly overwrite: boolean }): void | Thenable<void> {
     let srcVolume: Volume | undefined
     let dstVolume: Volume | undefined
@@ -414,7 +473,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
 
       const srcParentDir = this.mustFindParentDir(srcVolume, source)
       const srcFile = this.mustFindFileOrDir(srcVolume, srcParentDir, source)
-      if (srcFile.type == "DIR") {
+      if (srcFile.type == FileType.DIR) {
         if (dstVolume instanceof Dos33Volume) {
           throw new Error("Not allowed on a Dos 3.3 volume")
         }
@@ -424,49 +483,38 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         const srcContents = srcFile.getContents()
         const dstParentDir = this.mustFindParentDir(dstVolume, destination)
 
-        let newName = srcFile.name
-
-        // *** strip special suffixes first? ***
-        // *** deal with special suffixes? ***
-
-        // strip off special suffixes
-        const n = newName.lastIndexOf("_")
-        if (n > 0) {
-          newName = newName.substring(0, n)
-        }
-
-        newName = dstVolume.preprocessName(newName)
-        // *** does new truncated name already exist?
-
-        // *** search for newName instead ***
+        const dstInfo = this.getCleanFileName(dstVolume, destination)
         let dstFile = this.mayFindFileOrDir(dstVolume, dstParentDir, destination)
         if (dstFile) {
           if (!options.overwrite) {
             throw vscode.FileSystemError.FileExists(destination)
           }
-          // *** fileType/auxType could change ***
         } else {
-          // *** convert srcFile.type between DOS 3.3 and Prodos type/auxType? ***
-          const fileType = ProdosFileType.BIN // ***
-          dstFile = dstVolume.createFile(dstParentDir, newName, fileType, srcFile.auxType)
+          let fileType = srcFile.type
+          let auxType = srcFile.auxType
+          if (srcVolume instanceof Dos33Volume) {
+            if (dstVolume instanceof ProdosVolume) {
+              if (srcFile.type == FileType.BAS) {
+                auxType = 0x0801
+              }
+            }
+          } else if (dstVolume instanceof Dos33Volume) {
+            // TODO: convert from ProDOS -> DOS 3.3 type?
+          }
+          dstFile = dstVolume.createFile(dstParentDir, dstInfo.name, fileType, auxType)
         }
         dstFile.setContents(srcContents)
+        destination = this.renameUri(destination, dstFile)
       }
-
-      // *** deal with special suffixes?
 
       dstVolume.commitChanges()
       this.fireSoon(
-        // *** always created? build destination/fileName instead? ***
         { type: vscode.FileChangeType.Created, uri: destination }
       )
     } catch (e: any) {
       srcVolume?.revertChanges()
       dstVolume?.revertChanges()
-      if (e instanceof vscode.FileSystemError) {
-        throw e
-      }
-      throw vscode.FileSystemError.NoPermissions("copy failed - " + e.message)
+      throw e
     }
   }
 
@@ -478,46 +526,6 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     }
     volume.revertChanges()
     return volume
-  }
-
-  private getFullFileName(fileEntry: FileEntry): string {
-    let name = fileEntry.name
-    let type = fileEntry.type
-    if (type == "DIR") {
-      // no change
-    } else if (type == "A") {
-      name += ".BAS"
-    } else if (type == "I") {
-      name += ".INT"
-    } else if (type == "T") {
-      if (!fileEntry.name.endsWith(".TXT")) {
-        name += ".TXT"
-      }
-    } else if (type == "B" || type == "BIN") {
-      let defaultBin = true
-      const binLength = fileEntry.getContents()?.length ?? 0x0000
-      if (binLength >= 0x1FF8 && binLength <= 0x2000) {
-        if (fileEntry.auxType == 0x2000 || fileEntry.auxType == 0x4000) {
-          if (!fileEntry.name.endsWith(".PIC")) {
-            name += ".PIC"
-          }
-          defaultBin = false
-        }
-      }
-      if (defaultBin) {
-        name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
-        name += ".BIN"
-      }
-    } else if (type == "SYS") {
-      name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
-      name += ".SYS"
-    } else if (type != "DIR") {
-      if (type.startsWith("$")) {
-        name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
-      }
-      name += "." + type
-    }
-    return name
   }
 
   private getDirName(uri: vscode.Uri): string {
@@ -539,7 +547,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     if (!file) {
       throw vscode.FileSystemError.FileNotFound(uri)
     }
-    if (file.type != "DIR") {
+    if (file.type != FileType.DIR) {
       throw vscode.FileSystemError.FileNotADirectory(uri)
     }
     return file
@@ -548,7 +556,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
   private mustFindFile(volume: Volume, uri: vscode.Uri): FileEntry {
     const parentDir = this.mustFindParentDir(volume, uri)
     const file = this.mustFindFileOrDir(volume, parentDir, uri)
-    if (file.type == "DIR") {
+    if (file.type == FileType.DIR) {
       throw vscode.FileSystemError.FileIsADirectory(uri)
     }
     return file
@@ -560,7 +568,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     if (!file) {
       throw vscode.FileSystemError.FileNotFound(uri)
     }
-    if (file.type != "DIR") {
+    if (file.type != FileType.DIR) {
       throw vscode.FileSystemError.FileNotADirectory(uri)
     }
     return file
@@ -575,36 +583,189 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
   }
 
   private mayFindFileOrDir(volume: Volume, parent: FileEntry, uri: vscode.Uri): FileEntry | undefined {
-    let fileName = path.posix.basename(uri.path)
 
-    // strip "magic" extensions
-    let n = fileName.lastIndexOf("_$")
-    if (n >= 0) {
-      fileName = fileName.substring(0, n)
-    }
-
-    // get name without type extension
-    let coreName = fileName
-    n = fileName.lastIndexOf(".")
-    if (n >= 0) {
-      coreName = fileName.substring(0, n)
-    }
+    const fileInfo = this.getCleanFileName(volume, uri)
 
     let file: FileEntry | undefined
     volume.forEachAllocatedFile(parent, (fileEntry: FileEntry) => {
-      if (fileEntry.type == "DIR") {
-        if (fileEntry.name != fileName) {
-          return true
-        }
-      } else {
-        if (fileEntry.name != fileName && fileEntry.name != coreName) {
-          return true
-        }
+      if (fileEntry.name != fileInfo.name) {
+        return true
       }
       file = fileEntry
       return false
     })
 
     return file
+  }
+
+  private renameUri(uri: vscode.Uri, file: FileEntry): vscode.Uri {
+    const parts = path.parse(uri.path)
+    const fileName = this.getFullFileName(file)
+    const newPath = path.format({ ...parts, base: fileName })
+    return uri.with({ path: newPath })
+  }
+
+  private getFullFileName(fileEntry: FileEntry): string {
+
+    let name = fileEntry.name
+    let type = fileEntry.type
+    if (type == FileType.DIR) {
+      // no change
+    } else if (type == FileType.BAS) {
+      if (!fileEntry.name.endsWith(".BAS")) {
+        name += "_.BAS"
+      }
+    } else if (type == FileType.INT) {
+      if (!fileEntry.name.endsWith(".INT")) {
+        name += "_.INT"
+      }
+    } else if (type == FileType.TXT) {
+      if (!fileEntry.name.endsWith(".TXT")) {
+        if (!fileEntry.name.endsWith(".S")) {
+          name += "_.TXT"
+        }
+      }
+    } else if (type == FileType.Y) {
+
+      const config = vscode.workspace.getConfiguration("rpwa2.filesystem.convert")
+      const convertLisa2 = config.get<boolean>("lisa2", true)
+      // getContents so auxType gets filled in
+      const contents = fileEntry.getContents()
+      // add .L suffix to LISA source files
+      if (convertLisa2 && fileEntry.auxType == 0x1800) {
+        name += "_.L"
+      } else {
+        name += "_.Y"
+      }
+    } else if (type == FileType.BIN) {
+      let defaultBin = true
+      const binLength = fileEntry.getContents()?.length ?? 0x0000
+      if (binLength >= 0x1FF8 && binLength <= 0x2000) {
+        if (fileEntry.auxType == 0x2000 || fileEntry.auxType == 0x4000) {
+          if (!fileEntry.name.endsWith(".PIC")) {
+            name += "_.PIC"
+          }
+          defaultBin = false
+        }
+      }
+      if (defaultBin) {
+        name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
+        name += ".BIN"
+      }
+    } else if (type == FileType.SYS) {
+      name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
+      name += ".SYS"
+    } else {
+      if (FileType[type]) {
+        name += "_." + FileType[type]
+      } else {
+        name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0") +
+                ".$" + type.toString(16).toUpperCase().padStart(2, "0")
+      }
+    }
+    return name
+  }
+
+  private getCleanFileName(volume: Volume, uri: vscode.Uri): FileInfo {
+    let base = path.posix.basename(uri.path)
+    let suffix = ""
+    let typeStr: string | undefined
+    let auxStr: string | undefined
+
+    // NOTE: strip out " copy" that VSCode incorrectly inserts
+    let n = base.lastIndexOf(" copy.")
+    if (n >= 0) {
+      base = base.substring(0, n) + base.substring(n + 5)
+    }
+
+    // strip extra extensions
+    n = base.lastIndexOf("_$")
+    if (n >= 0) {
+      typeStr = base.substring(n + 2).toUpperCase()
+      const x = typeStr.lastIndexOf(".")
+      if (x >= 0) {
+        auxStr = typeStr.substring(0, x)
+        typeStr = typeStr.substring(x + 1)
+      } else {
+        typeStr = undefined
+      }
+      base = base.substring(0, n)
+    } else {
+      n = base.lastIndexOf("_.")
+      if (n >= 0) {
+        typeStr = base.substring(n + 2).toUpperCase()
+        base = base.substring(0, n)
+      }
+    }
+
+    n = base.lastIndexOf(".")
+    if (n >= 0) {
+      suffix = base.substring(n)    // including "."
+      base = base.substring(0, n)
+    }
+
+    let lengthLimit
+    if (volume instanceof Dos33Volume) {
+      base = base.toUpperCase()
+      suffix = suffix.toUpperCase()
+      lengthLimit = 30
+    } else {
+      lengthLimit = 15
+    }
+
+    // truncate and append "~"
+    if (base.length > lengthLimit - suffix.length) {
+      base = base.substring(0, lengthLimit - suffix.length - 1) + "~"
+    }
+
+    const typeMap = new Map<string, FileType>([
+      [ "TXT", FileType.TXT ],
+      [ "BIN", FileType.BIN ],
+      [ "DIR", FileType.DIR ],
+      [ "AWP", FileType.AWP ],
+      [ "INT", FileType.INT ],
+      [ "BAS", FileType.BAS ],
+      [ "REL", FileType.REL ],
+      [ "SYS", FileType.SYS ],
+      [ "S",   FileType.S   ],
+      [ "X",   FileType.X   ],
+      [ "Y",   FileType.Y   ]
+    ])
+
+    let auxType = 0x0000
+    if (auxStr) {
+      auxType = parseInt(auxStr, 16)
+    }
+
+    let fileType : FileType | undefined
+    if (typeStr) {
+      if (typeStr.startsWith("$")) {
+        fileType = parseInt(typeStr.substring(1), 16)
+      } else {
+        fileType = typeMap.get(typeStr)
+        if (!fileType) {
+          // check for artificial suffixes
+          if (typeStr == "PIC") {
+            fileType = FileType.BIN
+            auxType = 0x2000
+          } else if (typeStr == "L") {
+            fileType = FileType.Y
+            auxType = 0x1800
+          } else {
+            fileType = FileType.BIN
+          }
+        }
+      }
+    // check actual (not artificial) suffixes
+    } else if (suffix.toUpperCase() == ".S") {
+      fileType = FileType.TXT
+    } else if (suffix.toUpperCase() == ".PIC") {
+      fileType = FileType.BIN
+      auxType = 0x2000
+    } else {
+      fileType = FileType.BIN
+    }
+
+    return { name: base + suffix, type: fileType, auxType }
   }
 }

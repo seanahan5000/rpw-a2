@@ -36,6 +36,32 @@
 	"icon": "images/rpwa2-icon.png",
 	"main": "./out/extension",
 	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "RPWA2",
+			"properties": {
+				"rpwa2.filesystem.verify": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Verify volume before and after every operation."
+				},
+				"rpwa2.filesystem.convert.txt": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Automatically convert Apple TXT format to text."
+				},
+				"rpwa2.filesystem.convert.merlin": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Automatically convert MERLIN-format .S files to text."
+				},
+				"rpwa2.filesystem.convert.lisa2": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "Automatically convert LISA-format files to .L text files."
+				}
+			}
+		},
 		"languages": [
 			{
 				"id": "dsk",

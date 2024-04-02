@@ -1,7 +1,7 @@
 
 import { DiskImage, BlockData } from "./disk_image"
 import { StorageType } from "./prodos"
-import { ProdosVolume, ProdosFileEntry, ProdosVolSubDir, ProdosFileType } from "./prodos"
+import { ProdosVolume, ProdosFileEntry, ProdosVolSubDir, FileType } from "./prodos"
 
 enum BlockState {
   FREE = 0,
@@ -188,8 +188,8 @@ export class VerifiedProdosVolume extends ProdosVolume {
     // TODO: check lastMod date/time
 
     if (file.storageType == StorageType.Dir) {
-      this.check(file.typeByte == ProdosFileType.DIR,
-        `Bad type in directory: expected ${ProdosFileType.DIR}, saw ${file.typeByte}`)
+      this.check(file.typeByte == FileType.DIR,
+        `Bad type in directory: expected ${FileType.DIR}, saw ${file.typeByte}`)
       // *** this.check(file.eof == 0x000000)     // TODO: correct for directories? *** 0x400 (2 blocks?)
       // *** this.check(file.auxType == 0x0000)   // TODO: correct for directories? *** 0x2000
       this.verifySubDir(file)
@@ -323,7 +323,7 @@ function testProdos() {
     return
   }
 
-  const file = volume.createFile(parent, "TEST_FILE", ProdosFileType.BIN, 0x2000)
+  const file = volume.createFile(parent, "TEST_FILE", FileType.BIN, 0x2000)
   let direction = 1
   let fileSize = 0x100
   const maxFileSize = 0x0ffffff
