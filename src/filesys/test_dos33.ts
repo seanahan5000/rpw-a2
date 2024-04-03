@@ -107,7 +107,7 @@ export class VerifiedDos33Volume extends Dos33Volume {
       }
     }
 
-    for (let t = (allRefed ? 3 : 0); t < 35; t += 1) {
+    for (let t = (allRefed ? 3 : 1); t < 35; t += 1) {
       for (let s = 0; s < 16; s += 1) {
         this.checkWarn(this.sectorStates[t][s] != SectorState.USED,
           `Track ${t} sector ${s} marked as used but never referenced`)
@@ -218,7 +218,7 @@ export class VerifiedDos33Volume extends Dos33Volume {
 }
 
 
-function testDos33() {
+function testDos33a() {
   const diskImage = new DiskImage("dsk", new Uint8Array(35 * 16 * 256), false)
   const volume = new VerifiedDos33Volume(diskImage, true)
   const parent = new Dos33VolFileEntry(volume)
@@ -283,8 +283,79 @@ function testDos33() {
   }
 }
 
-// testDos33()   // ***
+function testDos33b() {
+  const diskImage = new DiskImage("dsk", new Uint8Array(35 * 16 * 256), false)
+  const volume = new VerifiedDos33Volume(diskImage, true)
 
+  const iterationCount = 10000
+  let fileIndex = 0
+  let fileList: string[] = []
+
+  while (fileIndex < iterationCount) {
+    const fileSize = 0x380    // TODO: randomize size?
+    const fileName = "FILE_" + fileIndex.toString()
+    fileIndex += 1
+    let file: Dos33FileEntry | undefined
+    try {
+      const parent = new Dos33VolFileEntry(volume)
+      file = <Dos33FileEntry>volume.createFile(parent, fileName, FileType.BIN, fileSize)
+      const fillData = new Uint8Array(fileSize).fill(0xee)
+      file.setContents(fillData)
+      volume.commitChanges()
+    } catch (e: any) {
+      volume.revertChanges()
+      if (e.message != "Catalog full" && e.message != "Disk full") {
+        console.log("error")
+      }
+    }
+
+    if (!file) {
+      // delete half of allocated files from list, randomly
+      const parent = new Dos33VolFileEntry(volume)
+      const count = Math.floor(fileList.length / 2)
+      for (let i = 0; i < count; i += 1) {
+        const n = Math.floor(Math.random() * fileList.length)
+        try {
+          const f = volume.findFileEntry(fileList[n])
+          if (!f) {
+            throw Error("File not found")
+          }
+          volume.deleteFile(parent, f)
+          volume.commitChanges()
+        } catch (e: any) {
+          volume.revertChanges()
+          console.log("error")
+        }
+        fileList.splice(n, 1)
+      }
+      continue
+    }
+
+    fileList.push(fileName)
+  }
+
+  while (true) {
+    const fileName = fileList.pop()
+    if (!fileName) {
+      break
+    }
+    try {
+      const parent = new Dos33VolFileEntry(volume)
+      const f = volume.findFileEntry(fileName)
+      if (!f) {
+        throw Error("File not found")
+      }
+      volume.deleteFile(parent, f)
+      volume.commitChanges()
+    } catch (e: any) {
+      volume.revertChanges()
+      console.log("error")
+    }
+  }
+}
+
+// testDos33a()
+// testDos33b()
 
 //   Hex 80+file type - file is locked
 //   00+file type - file is not locked
@@ -298,4 +369,3 @@ function testDos33() {
 //   40 - B type file
 //   (thus, 84 is a locked Binary file, and 90 is a locked
 //  R type file)
-

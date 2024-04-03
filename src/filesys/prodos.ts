@@ -1,6 +1,8 @@
 
 import { DiskImage, BlockData } from "./disk_image"
 
+// TODO: prune directory block after all files in it are deleted
+
 //------------------------------------------------------------------------------
 
 export interface FileEntry {
@@ -468,7 +470,6 @@ export class ProdosVolSubDir {
 //------------------------------------------------------------------------------
 
 // fake directory that contains the volume root files
-// *** redo this using initialize()? ***
 export class ProdosVolFileEntry extends ProdosFileEntry {
   constructor(volume: ProdosVolume, block: BlockData) {
     super(volume, block, 0)
@@ -498,7 +499,7 @@ export class ProdosVolume {
     this.totalBlocks = image.getBlockCount()
     this.bitmapBlocks = Math.ceil(this.totalBlocks / (512 * 8))
 
-    // *** share this code ***
+    // TODO: share this code
 
     let block = this.readBlock(this.volumeHeaderBlock)
     const volSubDir = new ProdosVolSubDir(this, block, !format)
@@ -721,7 +722,7 @@ export class ProdosVolume {
     }
 
     // make sure file name isn't already used at destination
-    // *** maybe let allocateFile do this? ***
+    // TODO: maybe let allocateFile do this?
     if (this.fileExists(dstDir, file.name)) {
       throw new Error("File/directory exists in destination")
     }
@@ -772,9 +773,9 @@ export class ProdosVolume {
       this.forEachAllocatedFile(parent, (fileEntry: FileEntry) => {
         if (fileEntry.name == subName) {
           if (pathName != "") {
-            // *** ignore non-directory in mid-path
+            // TODO: ignore non-directory in mid-path
             if (fileEntry.type != FileType.DIR) {
-              // *** throw error? ***
+              // TODO: throw error?
               return true
             }
           }
@@ -793,14 +794,11 @@ export class ProdosVolume {
     return file
   }
 
-  // *** VSCode checks for duplicate directories, but we should too
-  // *** pass in/handle overwrite? ***
-  // *** directories different?
+  // TODO: VSCode checks for duplicate directories, but we should too
+  // TODO: pass in/handle overwrite? (directories different?)
   public createFile(parent: FileEntry, fileName: string, type: FileType, auxType: number): FileEntry {
-
-    // TODO: validate/limit fileName *** also done in set name ***
-
-    // *** verify that file doesn't already exist ***
+    // TODO: validate/limit fileName (also done in set name)
+    // TODO: verify that file doesn't already exist
     return this.allocateFile(<ProdosFileEntry>parent, fileName, type, auxType)
   }
 

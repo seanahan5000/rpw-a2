@@ -144,7 +144,6 @@ export class VerifiedProdosVolume extends ProdosVolume {
 
       while (entryOffset + 0x27 <= curBlock.data.length) {
         if (curBlock.data[entryOffset + 0x00] != 0x00) {
-          // *** progress?
           // *** validate all name characters ***
           const fileEntry = new ProdosFileEntry(this, curBlock, entryOffset)
           this.verifyFileDir(subDir, fileEntry)
@@ -307,13 +306,10 @@ export class VerifiedProdosVolume extends ProdosVolume {
 }
 
 
+function testProDOSa() {
 
-// *** test making many files and directories and then deleting them
-
-function testProdos() {
-
-  // *** iterate through volume sizes to catch all bitmap sizes ***
-  // *** test larger jumps up/down in size ***
+  // TODO: iterate through volume sizes to catch all bitmap sizes
+  // TODO: test larger jumps up/down in size
 
   const diskImage = new DiskImage("hdv", new Uint8Array(0x1FFFE00), false)
   const volume = new VerifiedProdosVolume(diskImage, true)
@@ -381,43 +377,81 @@ function testProdos() {
   }
 }
 
-// testProdos()    // ***
 
-// *** TESTING: create files and dirs using Prodos, compare result against this
-  // *** start with same empty .po image in both cases
+// TODO: expand this to create files in subdirectories
+function testProDOSb() {
+  const diskImage = new DiskImage("po", new Uint8Array(35 * 16 * 256), false)
+  const volume = new VerifiedProdosVolume(diskImage, true)
 
-// *** stress test creating/deleting/moving files and directories
+  const iterationCount = 10000
+  let fileIndex = 0
+  let fileList: string[] = []
 
+  while (fileIndex < iterationCount) {
+    const fileSize = 0x280    // TODO: randomize size?
+    const fileName = "FILE_" + fileIndex.toString()
+    fileIndex += 1
+    let file: ProdosFileEntry | undefined
+    try {
+      const parent = volume.findFileEntry("")
+      file = <ProdosFileEntry>volume.createFile(parent!, fileName, FileType.BIN, fileSize)
+      const fillData = new Uint8Array(fileSize).fill(0xee)
+      file.setContents(fillData)
+      volume.commitChanges()
+    } catch (e: any) {
+      volume.revertChanges()
+      if (e.message != "Disk full") {
+        console.log("error")
+      }
+    }
 
-// *** dragging ALIENS folder from TFDEMO.PO to empty TEST.PO fails
+    if (!file) {
+      // delete half of allocated files from list, randomly
+      const parent = volume.findFileEntry("")
+      const count = Math.floor(fileList.length / 2)
+      for (let i = 0; i < count; i += 1) {
+        const n = Math.floor(Math.random() * fileList.length)
+        try {
+          const f = volume.findFileEntry(fileList[n])
+          if (!f) {
+            throw Error("File not found")
+          }
+          volume.deleteFile(parent!, f, false)
+          volume.commitChanges()
+        } catch (e: any) {
+          volume.revertChanges()
+          console.log("error")
+        }
+        fileList.splice(n, 1)
+      }
+      continue
+    }
 
-// *** dragging long file name file from DOS 3.3 to Prodos leaves stub file
+    fileList.push(fileName)
+  }
 
-// *** dragging AUTOMATION.PIC 3.3 -> Prodos leaves file that doesn't open
+  while (true) {
+    const fileName = fileList.pop()
+    if (!fileName) {
+      break
+    }
+    try {
+      const parent = volume.findFileEntry("")
+      const f = volume.findFileEntry(fileName)
+      if (!f) {
+        throw Error("File not found")
+      }
+      volume.deleteFile(parent!, f, false)
+      volume.commitChanges()
+    } catch (e: any) {
+      volume.revertChanges()
+      console.log("error")
+    }
+  }
+}
 
-// *** create directory at volume root still has problems -- shows up in other volumes ***
-
-// *** prune directory block after all files in it are deleted
-
-//------------------------------------------------------------------------------
-
-// track parallel dir/file tree
-// track pass number
-  // do random dir/file create/rename/delete
-  // compare tree against image
-// after N iterations
-  // delete all files
-  // check final state
-
-// stress files (DOS 3.3)
-  // create file of random size/name
-    // if disk full, delete random file
-    // verify after every operation
-  // after looping, delete all remaining files
-  // confirm final size/state
-
-// stress files/dirs (Prodos)
-  // create a random directory
+// testProDOSa()
+// testProDOSb()
 
 //------------------------------------------------------------------------------
 

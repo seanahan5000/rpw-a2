@@ -7,7 +7,7 @@ import { FileEntry, FileType, DiskFullError } from "./prodos"
 type Dos33DataProc = (sector: SectorData) => boolean
 type Dos33FileProc = (fileEntry: Dos33FileEntry) => boolean
 
-// *** be more "bullet proof" on .dsk files that aren't actually DOS 3.3
+// TODO: be more "bullet proof" on .dsk files that aren't actually DOS 3.3
 
 //------------------------------------------------------------------------------
 
@@ -15,7 +15,7 @@ export class Dos33VTOC {
 
   public data: Uint8Array
 
-  // *** add reset method? ***
+  // TODO: add reset method?
   //   vtoc[0x00] = 4     // matches real disks
   //   vtoc[0x01] = 17    // first catalog track
   //   vtoc[0x02] = 15    // first catalog sector
@@ -61,7 +61,7 @@ export class Dos33VTOC {
     this.data[0x30] = value
   }
 
-  // *** check how real code treats this -- just high bit? ***
+  // TODO: check how real code treats this -- just high bit?
   public get allocDirection(): number {
     return (this.data[0x31] & 0x80) ? -1 : 1
   }
@@ -178,11 +178,10 @@ export class Dos33FileEntry implements FileEntry {
   }
 
   public get type(): FileType {
-    // *** TODO: catch value with multiple bits set? ***
+    // TODO: catch value with multiple bits set?
     if (!this._type) {
       let index = 0
       let value = this.typeByte & 0x7F
-      // *** mask instead ***
       while (value != 0) {
         index += 1
         value >>= 1
@@ -231,8 +230,8 @@ export class Dos33FileEntry implements FileEntry {
   }
 
   public set auxType(value: number) {
-    // *** this.data[0x1F] = value & 0xff
-    // *** this.data[0x20] = value >> 8
+    // this.data[0x1F] = value & 0xff
+    // this.data[0x20] = value >> 8
     this._auxType = value
   }
 
@@ -270,7 +269,6 @@ export class Dos33FileEntry implements FileEntry {
 
   private set typeByte(value: number) {
     this._type = undefined
-    // *** throw on bad values? ***
     this.data[0x02] = (value & 0x7F) | (this.data[0x02] & 0x80)
   }
 
@@ -284,12 +282,10 @@ export class Dos33FileEntry implements FileEntry {
   }
 
   getContents(): Uint8Array {
-    // *** remove size/address? ***
     return this.volume.getFileContents(this)
   }
 
   setContents(contents: Uint8Array) {
-    // *** add size/address? ***
     return this.volume.setFileContents(this, contents)
   }
 }
@@ -297,7 +293,6 @@ export class Dos33FileEntry implements FileEntry {
 //------------------------------------------------------------------------------
 
 // fake directory that contains the volume root files
-// *** redo this using initialize()? ***
 export class Dos33VolFileEntry extends Dos33FileEntry {
   constructor(volume: Dos33Volume) {
     const sector = { track: 0, index: 9, data: new Uint8Array(0x27) }
@@ -374,20 +369,22 @@ export class Dos33Volume {
 
     for (let t = 0; t < this.TracksPerDisk; t += 1) {
       // mark first 3 tracks as allocated for DOS
-      if (isBootable && t < 3) {
-        continue
+      if (t < 3) {
+        if (isBootable) {
+          continue
+        }
+        // track 0 is always allocated, even if non-bootable
+        if (t == 0) {
+          continue
+        }
       }
       // mark track 17 as allocated for catalog
       if (t == 17) {
         continue
       }
+
       vtoc.data[0x38 + t * 4 + 0] = 0xFF
       vtoc.data[0x38 + t * 4 + 1] = 0xFF
-
-      // track 0 sector 0 is always allocated, even if non-bootable
-      if (t == 0 && !isBootable) {
-        vtoc.data[0x38 + t * 4 + 1] = 0xFE
-      }
     }
 
     // initialize catalog sectors
@@ -397,7 +394,7 @@ export class Dos33Volume {
       sector.data[0x02] = s - 1
     }
 
-    // *** initialize boot image
+    // TODO: initialize boot image
     // let t = 0
     // let s = 0
     // let srcOffset = 0
@@ -471,10 +468,8 @@ export class Dos33Volume {
   }
 
   public createFile(parent: FileEntry, fileName: string, type: FileType, auxType: number): FileEntry {
-
-    // TODO: validate/limit fileName *** also done in set name ***
-
-    // *** verify that file doesn't already exist ***
+    // TODO: validate/limit fileName (also done in set name)
+    // TODO: verify that file doesn't already exist?
     return this.allocateFile(<Dos33FileEntry>parent, fileName, type, auxType)
   }
 
@@ -647,7 +642,7 @@ export class Dos33Volume {
       let tsList = this.readTrackSector(tslTrack, tslSector)
       index += 1
       for (let i = 0; i < pairsPerTsl; i += 1) {
-        //*** TODO: this isn't working here
+        // TODO: this isn't working here
         //  EDASM.OBJ catalog entry says it's 7 (0x600 + TSList) sectors long,
         //  but the file itself says it's 0x66c bytes long
         //
@@ -661,8 +656,7 @@ export class Dos33Volume {
           return
         }
         index += 1
-        //*** TODO: reconcile with comment above
-        // *** index >= ?
+        // TODO: reconcile with comment above
         if (index >= fileEntry.sectorLength) {
           return
         }
@@ -670,7 +664,6 @@ export class Dos33Volume {
       tslTrack = tsList.data[0x01]
       tslSector = tsList.data[0x02]
       if (tslTrack == 0 && tslSector == 0) {
-        //*** ran out of track/sectors
         break
       }
     }

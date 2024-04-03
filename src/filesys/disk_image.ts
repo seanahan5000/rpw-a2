@@ -210,7 +210,10 @@ export class DiskImage {
       this.workingData = this.snapWorkingData()
     }
 
-    let offset = (t * 16 + s) * 256
+    const offset = (t * 16 + s) * 256
+    if (offset >= this.workingData.length) {
+      throw new Error("readTrackSector of track {$t} sector {$s} failed")
+    }
     return { track: t, index: s, data: this.workingData.subarray(offset, offset + 256) }
   }
 
@@ -225,7 +228,10 @@ export class DiskImage {
       this.workingData = this.snapWorkingData()
     }
 
-    let offset = index * 512
+    const offset = index * 512
+    if (offset >= this.workingData.length) {
+      throw new Error("readBlock of block {$index} failed")
+    }
     return { index, data: this.workingData.subarray(offset, offset + 512) }
   }
 
