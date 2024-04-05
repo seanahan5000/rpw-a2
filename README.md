@@ -1,16 +1,44 @@
+This Retro Programmer's Workshop (RPW) extension provides VSCode editor support for HIRES graphics, and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for other related funtionality.)
 
-### Features
+<img src="images/hires.gif"/>
 
-* .dsk, .do, .po, .2mg, .hdv image files supported
+#### HIRES Graphics Editor
+
+<img src="images/hires.png"/>
+
+##### NOTES
+
+Copying a graphics selection puts that data on the clipboard in text form, ready to be pasted into 6502 source code.  The reverse is also supported, with the extension attempting to determine the dimensions of the data.
+
+#### File System Provider
+
+* Mounts .dsk, .do, .po, .2mg, and .hdv images (.nib and .woz not supported)
+* Supports file and folder move, copy, create, delete, and rename
+* Displays file contents as text, hex, 6502 disassembly, or HIRES graphics
+* Automatically detokenizes Applesoft and Integer BASIC files to text
+* Automatically converts Merlin and LISA v2 source files to text
+
+##### NOTES
+
+New volume images can be created by right clicking and choosing "New File..." in your project.  Name the new file with one of the supported suffixes (.dsk, .po, etc.) and then Mount it.  A non-bootable, empty image will be initialized, ready for files to be added to it.
+
+All write operations are treated as transactions.  The volume is verified before and after any operation.  If verification fails, the operation is rolled back and the volume left unmodified.  That said, back up any important disk image data before modifying with this extension.
+
+This extension has been tested by opening and verifying most images in the Asimov archive.  It will refuse to open any image with any questionable or unknown formatting.  This conservative approach could be relaxed in the future if necessary.
+
+The file conversion functionality in RPWA2 was intended to just be enough to access old code and graphics, not as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like CiderPress.
 
 ### Known Problems
 
-* After adding a new file or directory to the root of a drive image, the new file/directory appears in every mounted image instead of just in the target.  Clicking away from VSCode and then back updates all drive images to their correct state.  (Possibly a VSCode bug.)
+* With multiple images mounted, adding a new file or directory to a volume looks like it has been applied to all volumes.  The operation is correctly applied to just the target volume, but VSCode seems to incorrectly update its display of all volumes.  Switching away from the VSCode application and then back updates all drive images to display their actual correct contents.
 
-#### Prodos:
+* File system error information such as Disk Full is buried in the VSCode error reporting dialog and not visible without viewing the full message.  It's unclear how to make VSCode display just the relevant information without the extra noise.
+
+#### ProDOS
 
 * Sparse files are not directly supported and will be converted to their expanded form if copied.
 
 #### DOS 3.3
 
 * Non-sequential text files are not supported.
+* File names containing the "/" character can't be accessed.

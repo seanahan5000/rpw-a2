@@ -1,7 +1,10 @@
 .vscode/**
 node_modules/**
 src/**
+media/**
 **/*.map
+out/src/**
+out/images/**
 .gitignore
 tsconfig.json
 webpack.config.js
@@ -9,3 +12,5 @@ webpack.config.js
 **/*.map
 .DS_Store
 *.vsix
+notes.txt
+TODO.md

@@ -12,9 +12,9 @@ export function textFromPixels(image: PixelData): string {
   let indent = "                "
   let byteWidth = Math.floor((image.bounds.x + image.bounds.width + 6) / 7) - Math.floor(image.bounds.x / 7)
 
-  let useHex = false      // TODO: get from settings
-  let upperCase = false   // TODO: get from settings
-  let vertical = false    // TODO: parameter?
+  const useHex = true     // TODO: get from settings
+  const upperCase = false // TODO: get from settings
+  const vertical = false  // TODO: parameter?
 
   let opcode = byteWidth == 1 ? "db " : "hex"
   if (!useHex) {

@@ -1,10 +1,10 @@
 {
 	"name": "rpwa2",
 	"displayName": "RPW A2",
-	"description": "Apple II DOS 3.3 and ProDOS file systems and HIRES image editor",
+	"description": "Apple II HIRES graphics editor with ProDOS and DOS 3.3 file system providers",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
@@ -14,7 +14,22 @@
 		"vscode": "^1.74.0"
 	},
 	"categories": [
-		"Other"
+		"Visualization","Programming Languages"
+	],
+	"keywords": [
+		"apple",
+		"apple2",
+		"filesystem",
+		"prodos",
+		"dos 3.3",
+		"applesoft",
+		"assembly",
+		"merlin",
+		"lisa",
+		"hires",
+		"graphics",
+		"editor",
+		"retro"
 	],
 	"activationEvents": [
 		"workspaceContains:**/*.dsk",
@@ -119,15 +134,6 @@
 				"selector": [
 					{
 						"filenamePattern": "*.INT"
-					}
-				]
-			},
-			{
-				"viewType": "rpwa2.TXT",
-				"displayName": "Apple Text",
-				"selector": [
-					{
-						"filenamePattern": "*.TXT"
 					}
 				]
 			},
