@@ -25,11 +25,9 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor")
 
     const wsUri = vscode.Uri.parse(`dsk:/?${uri}`)
-    if (vscode.workspace.getWorkspaceFolder(wsUri) === undefined) {
-      const name = vscode.workspace.asRelativePath(uri, true)
-      const index = vscode.workspace.workspaceFolders?.length || 0
-      const workspaceFolder: vscode.WorkspaceFolder = { uri: wsUri, name, index }
-      vscode.workspace.updateWorkspaceFolders(index, 0, workspaceFolder)
-    }
+    const name = vscode.workspace.asRelativePath(uri, true)
+    const index = vscode.workspace.workspaceFolders?.length || 0
+    const workspaceFolder: vscode.WorkspaceFolder = { uri: wsUri, name, index }
+    vscode.workspace.updateWorkspaceFolders(index, 0, workspaceFolder)
   }))
 }

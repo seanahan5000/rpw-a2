@@ -4,7 +4,7 @@
 	"description": "Apple II HIRES graphics editor with ProDOS and DOS 3.3 file system providers",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
@@ -133,7 +133,7 @@
 				"displayName": "Integer BASIC",
 				"selector": [
 					{
-						"filenamePattern": "*.INT"
+						"filenamePattern": "*.BIN"
 					}
 				]
 			},

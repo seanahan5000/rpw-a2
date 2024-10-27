@@ -8,6 +8,8 @@ This Retro Programmer's Workshop (RPW) extension provides VSCode editor support 
 
 ##### NOTES
 
+There is not a separate zoom tool.  Just move the cursor over the image to where you want to zoom in/out and press a number from 1 to 6.
+
 Copying a graphics selection puts that data on the clipboard in text form, ready to be pasted into 6502 source code.  The reverse is also supported, with the extension attempting to determine the dimensions of the data.
 
 #### File System Provider
@@ -26,11 +28,11 @@ All write operations are treated as transactions.  The volume is verified before
 
 This extension has been tested by opening and verifying most images in the Asimov archive.  It will refuse to open any image with any questionable or unknown formatting.  This conservative approach could be relaxed in the future if necessary.
 
-The file conversion functionality in RPWA2 was intended to just be enough to access old code and graphics, not as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like CiderPress.
+The file conversion functionality in RPW A2 is enough to access old code and graphics, but is not intendend as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like Ciderpress.
 
 ### Known Problems
 
-* With multiple images mounted, adding a new file or directory to a volume looks like it has been applied to all volumes.  The operation is correctly applied to just the target volume, but VSCode seems to incorrectly update its display of all volumes.  Switching away from the VSCode application and then back updates all drive images to display their actual correct contents.
+* With multiple images mounted, adding a new file or directory to a volume appears to add it to all volumes.  The operation is correctly applied to just the target volume, but VSCode incorrectly updates the display of all volumes.  Switching away from the VSCode application and then back refreshes the display with the actual correct volume contents.
 
 * File system error information such as Disk Full is buried in the VSCode error reporting dialog and not visible without viewing the full message.  It's unclear how to make VSCode display just the relevant information without the extra noise.
 
