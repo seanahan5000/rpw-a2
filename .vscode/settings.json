@@ -1,3 +1,7 @@
 {
-    "editor.tabSize": 2
+    "editor.tabSize": 2,
+	"editor.insertSpaces": true,
+	"workbench.colorCustomizations": {
+		"editor.background": "#000000"
+	}
 }

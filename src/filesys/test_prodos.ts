@@ -1,5 +1,5 @@
 
-import { DiskImage, BlockData } from "./disk_image"
+import { DiskImage, BlockData, SectorOrder } from "./disk_image"
 import { StorageType } from "./prodos"
 import { ProdosVolume, ProdosFileEntry, ProdosVolSubDir, FileType } from "./prodos"
 
@@ -457,6 +457,7 @@ function testProDOSb() {
 
 import * as fs from 'fs'
 import { VerifiedDos33Volume } from "./test_dos33"
+import { Dos33Volume } from "./dos33"
 
 function processFile(fileName: string) {
   const n = fileName.lastIndexOf(".")
@@ -467,7 +468,10 @@ function processFile(fileName: string) {
       const diskData = fs.readFileSync(fileName)
       try {
         const diskImage = new DiskImage(suffix, diskData, false)
-        if (diskImage.isDos33) {
+        if (diskImage.dosOrder == SectorOrder.Unknown) {
+          guessFormat(diskImage)
+        }
+        if (diskImage.dosOrder == SectorOrder.Dos33) {
           const volume = new VerifiedDos33Volume(diskImage, false)
         } else {
           const volume = new VerifiedProdosVolume(diskImage, false)
@@ -490,6 +494,31 @@ function processDir(dirName: string) {
       processDir(fileName)
     } else {
       processFile(fileName)
+    }
+  }
+}
+
+function guessFormat(diskImage: DiskImage) {
+  if (diskImage.imageOrder == SectorOrder.Unknown) {
+
+    const dosOrders   = [ SectorOrder.Dos33, SectorOrder.Prodos, SectorOrder.Prodos, SectorOrder.Unknown ]
+    const imageOrders = [ SectorOrder.Dos33, SectorOrder.Dos33,  SectorOrder.Prodos, SectorOrder.Unknown ]
+
+    for (let i = 0; i < dosOrders.length; i += 1) {
+      diskImage.revertChanges()
+      diskImage.dosOrder = dosOrders[i]
+      diskImage.imageOrder = imageOrders[i]
+      if (diskImage.dosOrder == SectorOrder.Dos33) {
+        if (Dos33Volume.CheckImage(diskImage)) {
+          break
+        }
+      } else if (diskImage.dosOrder == SectorOrder.Prodos) {
+        if (ProdosVolume.CheckImage(diskImage)) {
+          break
+        }
+      } else {
+        throw new Error(`Unknown disk volume sector order`)
+      }
     }
   }
 }

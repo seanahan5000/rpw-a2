@@ -1,76 +1,107 @@
 
 import { PixelData } from "./shared"
+import { DisplayFormat } from "./display/format"
 
 // dbug-only
-// import { unpackNaja1, unpackNaja2 } from "./unpack"
+// import { packNaja2 } from "./pack"
+// import { unpackNaja1, unpackNaja2, textFromNaja } from "./unpack"
 // import { SourceDocBuilder } from "./source_builder"
 
 //------------------------------------------------------------------------------
 
-export function textFromPixels(image: PixelData): string {
+type Header = {
+  format?: string
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  mask?: boolean
+  vertical?: boolean
+}
+
+//------------------------------------------------------------------------------
+
+export function textFromPixels(pixelData: PixelData, maskData?: PixelData, compress: boolean = false): string {
+
+  // if (compress) {
+  //   if (pixelData.format == "hires") {
+  //     // NOTE: assumes mask has already been applied to pixels
+  //     const byteData = packNaja2(pixelData)
+  //     return textFromNaja(byteData)
+  //   }
+  // }
+
   let text = ""
   let indent = "                "
-  let byteWidth = Math.floor((image.bounds.x + image.bounds.width + 6) / 7) - Math.floor(image.bounds.x / 7)
 
   const useHex = true     // TODO: get from settings
   const upperCase = false // TODO: get from settings
   const vertical = false  // TODO: parameter?
 
-  let opcode = byteWidth == 1 ? "db " : "hex"
+  let opcode = pixelData.byteWidth == 1 ? "db " : "hex"
   if (!useHex) {
     opcode = ".byte"
   }
 
-  if (byteWidth == 1) {
-    for (let i = 0; i < image.dataBytes.length; i += 1) {
-      text += indent + opcode + " "
-        + "%" + image.dataBytes[i].toString(2).padStart(8, "0") + "\n"
-    }
-  } else {
-    let dataBytes = image.dataBytes
-
-    if (vertical) {
-      dataBytes = new Uint8Array(dataBytes.length)
-      for (let y = 0; y < image.bounds.height; y += 1) {
-        for (let x = 0; x < byteWidth; x += 1) {
-          const value = image.dataBytes[y * byteWidth + x]
-          dataBytes[x * image.bounds.height + y] = value
-        }
-      }
-      byteWidth = Math.min(image.bounds.height, 8)
+  for (let pass = 0; pass < 2; pass += 1) {
+    const image = pass == 0 ? pixelData : maskData
+    if (!image) {
+      continue
     }
 
-    if (useHex) {
-      let lineIndex = 0
-      for (let i = 0; i < dataBytes.length; i += 1) {
-        if (lineIndex == 0) {
-          text += indent + opcode + " "
-        }
-        text += dataBytes[i].toString(16).padStart(2, "0")
-        if (++lineIndex == byteWidth) {
-          text += "\n"
-          lineIndex = 0
-        }
-      }
-      if (lineIndex != 0) {
-        text += "\n"
+    if (image.byteWidth == 1) {
+      for (let i = 0; i < image.bytes.length; i += 1) {
+        text += indent + opcode + " "
+          + "%" + image.bytes[i].toString(2).padStart(8, "0") + "\n"
       }
     } else {
-      let lineIndex = 0
-      for (let i = 0; i < dataBytes.length; i += 1) {
-        if (lineIndex == 0) {
-          text += indent + opcode + " "
-        } else {
-          text += ","
+      let dataBytes = image.bytes
+
+      // NOTE: this doesn't work for LORES or DLORES
+      if (vertical) {
+        dataBytes = new Uint8Array(dataBytes.length)
+        const height = dataBytes.length / image.byteWidth
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < image.byteWidth; x += 1) {
+            const value = image.bytes[y * image.byteWidth + x]
+            dataBytes[x * height + y] = value
+          }
         }
-        text += "$" + dataBytes[i].toString(16).padStart(2, "0")
-        if (++lineIndex == byteWidth) {
-          text += "\n"
-          lineIndex = 0
-        }
+        image.byteWidth = Math.min(height, 8)
       }
-      if (lineIndex != 0) {
-        text += "\n"
+
+      if (useHex) {
+        let lineIndex = 0
+        for (let i = 0; i < dataBytes.length; i += 1) {
+          if (lineIndex == 0) {
+            text += indent + opcode + " "
+          }
+          text += dataBytes[i].toString(16).padStart(2, "0")
+          if (++lineIndex == image.byteWidth) {
+            text += "\n"
+            lineIndex = 0
+          }
+        }
+        if (lineIndex != 0) {
+          text += "\n"
+        }
+      } else {
+        let lineIndex = 0
+        for (let i = 0; i < dataBytes.length; i += 1) {
+          if (lineIndex == 0) {
+            text += indent + opcode + " "
+          } else {
+            text += ","
+          }
+          text += "$" + dataBytes[i].toString(16).padStart(2, "0")
+          if (++lineIndex == image.byteWidth) {
+            text += "\n"
+            lineIndex = 0
+          }
+        }
+        if (lineIndex != 0) {
+          text += "\n"
+        }
       }
     }
   }
@@ -81,8 +112,12 @@ export function textFromPixels(image: PixelData): string {
 
   let header = indent
   header += ";{"
-  header += `"x":${image.bounds.x},"y":${image.bounds.y}`
-  header += `,"width":${image.bounds.width},"height":${image.bounds.height}`
+  header += `"format": "${pixelData.format}"`
+  header += `,"x":${pixelData.bounds.x},"y":${pixelData.bounds.y}`
+  header += `,"width":${pixelData.bounds.width},"height":${pixelData.bounds.height}`
+  if (maskData) {
+    header += ',"mask": true'
+  }
   if (vertical) {
     header += ',"vertical": true'
   }
@@ -92,18 +127,27 @@ export function textFromPixels(image: PixelData): string {
   return text
 }
 
-export function imageFromText(clipText: string): PixelData {
+export function imageFromText(clipText: string, screenFormat: DisplayFormat): { pixelData?: PixelData, maskData?: PixelData } {
+
   const lines = clipText.split(/\r?\n/)
   const doc = SourceDocBuilder.buildRawDoc(lines)
 
-  const rawImage = new PixelData()
-  const rawData: number[] = []
-  rawImage.dataBytes = rawData
-  doc.sourceLines.forEach((srcLine) => {
+  let pixelData: PixelData | undefined
+  let maskData: PixelData | undefined
+  let rawData: number[] = []
+  let header: any
+  let widthGuess = 0
+
+  for (let srcLine of doc.sourceLines) {
     let opcode = srcLine.opcode.toLowerCase()
     if (srcLine.comment.startsWith(";{")) {
       try {
-        rawImage.bounds = JSON.parse(srcLine.comment.slice(1))
+        header = JSON.parse(srcLine.comment.slice(1))
+        if (header?.format !== undefined) {
+          if (header?.format != screenFormat.name) {
+            return {}
+          }
+        }
       } catch {
       }
     }
@@ -116,8 +160,8 @@ export function imageFromText(clipText: string): PixelData {
         rawData.push(value)
         width += 1
       }
-      if (rawImage.bounds.width == 0) {
-        rawImage.bounds.width = width * 7
+      if (widthGuess == 0) {
+        widthGuess = screenFormat.calcPixelWidth(width)
       }
     } else if (opcode == "dfb" || opcode == "dc.b" || opcode == "db" || opcode == ".byte") {
       let argStr = srcLine.args
@@ -145,39 +189,62 @@ export function imageFromText(clipText: string): PixelData {
         rawData.push(value)
         width += 1
       }
-      if (rawImage.bounds.width == 0) {
-        rawImage.bounds.width = width * 7
+      if (widthGuess == 0) {
+        widthGuess = screenFormat.calcPixelWidth(width)
       }
     }
-  })
-
-  // dbug-only
-  // let najaImage = unpackNaja1(rawData)
-  // if (najaImage) {
-  //   return najaImage
-  // }
-
-  // dbug-only
-  // najaImage = unpackNaja2(rawData)
-  // if (najaImage) {
-  //   return najaImage
-  // }
-
-  if (rawImage.bounds.width == 0) {
-    rawImage.bounds.width = rawData.length * 7
   }
 
-  if (rawImage.bounds.height == 0) {
-    let heightGuess = rawData.length / Math.floor(rawImage.bounds.width / 7)
+  const hasMask = header?.mask ?? false
+  const formatName = header?.format ?? screenFormat.name
+
+  // if (formatName == "hires") {
+  //   if (!hasMask) {
+  //     let najaImage = unpackNaja1(rawData)
+  //     if (najaImage) {
+  //       return { pixelData: najaImage }
+  //     }
+  //
+  //     najaImage = unpackNaja2(rawData)
+  //     if (najaImage) {
+  //       return { pixelData: najaImage }
+  //     }
+  //   }
+  // }
+
+  if (widthGuess == 0) {
+    widthGuess = screenFormat.calcPixelWidth(rawData.length)
+  }
+
+  let bounds = {
+    x: header?.x ?? 0,
+    y: header?.y ?? 0,
+    width: header?.width ?? widthGuess,
+    height: header?.height ?? 0
+  }
+
+  if (bounds.height == 0) {
+    const byteWidthGuess = screenFormat.calcByteWidth(bounds.x, bounds.width)
+    const heightGuess = rawData.length / byteWidthGuess
     if (heightGuess == Math.floor(heightGuess)) {
-      rawImage.bounds.height = heightGuess
+      bounds.height = heightGuess
     } else {
-      rawImage.bounds.width = rawData.length * 7
-      rawImage.bounds.height = 1
+      bounds.width = screenFormat.calcPixelWidth(rawData.length)
+      bounds.height = 1
     }
   }
 
-  return rawImage
+  const byteWidth = screenFormat.calcByteWidth(bounds.x, bounds.width)
+  const halfSize = Math.floor(rawData.length / 2)
+  const rawPixels = hasMask ? rawData.slice(0, halfSize) : rawData
+  pixelData = new PixelData(formatName, bounds, byteWidth, new Uint8Array(rawPixels))
+
+  if (hasMask) {
+    const rawMask = rawData.slice(halfSize)
+    maskData = new PixelData(formatName, bounds, byteWidth, new Uint8Array(rawMask))
+  }
+
+  return { pixelData, maskData }
 }
 
 //------------------------------------------------------------------------------

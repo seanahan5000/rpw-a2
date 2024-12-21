@@ -309,6 +309,27 @@ export class Dos33Volume {
   readonly SectorsPerTrack = 16
   readonly BytesPerSector = 256
 
+  static CheckImage(image: DiskImage): boolean {
+    try {
+      const vtoc = image.readTrackSector(17, 0)
+      if (vtoc.data[0x27] == 122) {
+        const catTrack = vtoc.data[0x01]
+        const catSector = vtoc.data[0x02]
+        const numTracks = vtoc.data[0x34]
+        const numSectors = vtoc.data[0x35]
+        if (numTracks <= 35) {
+          if (numSectors == 16 || numSectors == 13) {
+            if (catTrack < numTracks && catSector < numSectors) {
+              return true
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+    }
+    return false
+  }
+
   constructor(image: DiskImage, reformat = false) {
     this.image = image
     if (reformat) {

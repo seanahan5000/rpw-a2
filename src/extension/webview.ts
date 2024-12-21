@@ -1,15 +1,16 @@
 
-import { DisplayView } from "../display_view"
+import { DisplayView } from "../display/display_view"
 import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
-import { HiresFrame, HiresTable, IMachineDisplay, IHostHooks } from "../shared"
+import { IMachineDisplay, IHostHooks, PixelData } from "../shared"
+import { HiresInterleave, TextLoresInterleave } from "../display/tables"
+import { deinterleave40, deinterleave80 } from "../display/text"
 
 // @ts-ignore
 const vscode = acquireVsCodeApi()
 
 class Webview implements IMachineDisplay, IHostHooks {
 
-  // in hires display order, 0x1FF8 to 0x2000 in size
-  private frameData?: Uint8Array
+  private graphicsData?: Uint8Array
   private displayView?: DisplayView
 
   constructor() {
@@ -30,7 +31,7 @@ class Webview implements IMachineDisplay, IHostHooks {
           // TODO: remember size of original incoming data?
           // TODO: what about extra data? read-only?
           // TODO: support new/untitled document?
-          this.frameData = dataBytes
+          this.graphicsData = dataBytes
           this.displayView = new DisplayView(topDiv, this)
           this.displayView.setHostHooks(this)
           this.displayView.update(false)
@@ -55,15 +56,15 @@ class Webview implements IMachineDisplay, IHostHooks {
         } else if (body.editType == "redo") {
           this.displayView?.redo()
         } else if (body.editType == "revert") {
-          this.frameData = body.contents
+          this.graphicsData = body.contents
           this.displayView?.revertUndo(body.editIndex)
         }
         break
       }
 
       case "getFileData": {
-        if (this.displayView && this.frameData) {
-          vscode.postMessage({ type: "response", requestId, body: Array.from(this.frameData) })
+        if (this.displayView && this.graphicsData) {
+          vscode.postMessage({ type: "response", requestId, body: Array.from(this.graphicsData) })
         }
         break
       }
@@ -78,6 +79,23 @@ class Webview implements IMachineDisplay, IHostHooks {
 
   // IMachineDisplay implementation
 
+  public getDisplayMode(): string {
+    const size = this.graphicsData?.length ?? 0
+    if (size == 0x0400) {
+      return "lores"
+    }
+    if (size == 0x0800) {
+      return "dlores"
+    }
+    if (size >= 0x1ff8 && size <= 0x2000) {
+      return "hires"
+    }
+    if (size == 0x4000) {
+      return "dhires"
+    }
+    return "unknown"
+  }
+
   getVisibleDisplayPage(): number {
     return 0
   }
@@ -88,30 +106,65 @@ class Webview implements IMachineDisplay, IHostHooks {
 
   // IMachineDisplay
 
-  public getDisplayMemory(frame: HiresFrame, page: number): void {
-    if (this.frameData) {
-      let offset = 0
-      const pageAddress = 0x0000
-      for (let y = 0; y < frame.height; y += 1) {
-        let address = pageAddress + HiresTable[y]
-        for (let x = 0; x < frame.byteWidth; x += 1) {
-          frame.bytes[offset + x] = this.frameData[address + x]
-        }
-        offset += frame.byteWidth
+  public getDisplayMemory(frame: PixelData, page: number): void {
+    if (this.graphicsData) {
+      const size = this.graphicsData.length
+      if (size == 0x0400) {                           // lores
+        deinterleave40(this.graphicsData, frame, TextLoresInterleave)
+      } else if (size == 0x0800) {                    // double-lores
+        deinterleave80(this.graphicsData, frame, TextLoresInterleave)
+      } else if (size >= 0x1ff8 && size <= 0x2000) {  // hires
+        deinterleave40(this.graphicsData, frame, HiresInterleave)
+      } else if (size == 0x4000) {                    // double-hires
+        deinterleave80(this.graphicsData, frame, HiresInterleave)
       }
     }
   }
 
-  public setDisplayMemory(frame: HiresFrame, page: number): void {
-    if (this.frameData) {
-      let offset = 0
-      const pageAddress = 0x0000
-      for (let y = 0; y < frame.height; y += 1) {
-        let address = pageAddress + HiresTable[y]
-        for (let x = 0; x < frame.byteWidth; x += 1) {
-          this.frameData[address + x] = frame.bytes[offset + x]
+  // TODO: wouldn't be needed if formats did interleave
+  // TODO: too much copy/paste here
+  public setDisplayMemory(frame: PixelData, page: number): void {
+    if (this.graphicsData) {
+      if (this.graphicsData.length == 0x0400) {         // lores
+        let srcOffset = 0
+        for (let y = 0; y < frame.bounds.height; y += 1) {
+          const address = TextLoresInterleave[y]
+          for (let x = 0; x < frame.byteWidth; x += 1) {
+            this.graphicsData[address + x] = frame.bytes[srcOffset + x]
+          }
+          srcOffset += frame.byteWidth
         }
-        offset += frame.byteWidth
+      } else if (this.graphicsData.length == 0x0800) {  // double-lores
+        let srcOffset = 0
+        for (let y = 0; y < frame.bounds.height; y += 1) {
+          const address = TextLoresInterleave[y]
+          let srcIndex = srcOffset
+          for (let x = 0; x < frame.byteWidth / 2; x += 1) {
+            this.graphicsData[0x0000 + address + x] = frame.bytes[srcIndex++]
+            this.graphicsData[0x0400 + address + x] = frame.bytes[srcIndex++]
+          }
+          srcOffset += frame.byteWidth
+        }
+      } else if (this.graphicsData.length == 0x2000) {  // hires
+        let srcOffset = 0
+        for (let y = 0; y < frame.bounds.height; y += 1) {
+          const address = HiresInterleave[y]
+          for (let x = 0; x < frame.byteWidth; x += 1) {
+            this.graphicsData[address + x] = frame.bytes[srcOffset + x]
+          }
+          srcOffset += frame.byteWidth
+        }
+      } else if (this.graphicsData.length == 0x4000) {  // double-hires
+        let srcOffset = 0
+        for (let y = 0; y < frame.bounds.height; y += 1) {
+          const address = HiresInterleave[y]
+          let srcIndex = srcOffset
+          for (let x = 0; x < frame.byteWidth / 2; x += 1) {
+            this.graphicsData[0x0000 + address + x] = frame.bytes[srcIndex++]
+            this.graphicsData[0x2000 + address + x] = frame.bytes[srcIndex++]
+          }
+          srcOffset += frame.byteWidth
+        }
       }
     }
   }

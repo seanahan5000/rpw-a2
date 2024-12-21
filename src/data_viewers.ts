@@ -1,7 +1,7 @@
 
 import { Isa6502 } from "./isa6502"
-import { HiresTable } from "./shared"
-import { HiresDisplay } from "./display"
+import { ScreenDisplay, formatMap } from "./display/display"
+import { HiresInterleave } from "./display/tables"
 
 // TODO: open viewer with a common interface from a name string? Get rid of exports?
 
@@ -704,13 +704,15 @@ export class ViewBinaryDisasm {
 }
 
 
-export class ViewBinaryHires {
-  static asCanvas(data: Uint8Array): HTMLCanvasElement {
-    let canvas = <HTMLCanvasElement>document.createElement("canvas")
-    canvas.width = 560
-    canvas.height = 384
-    let display = new HiresDisplay(canvas)
-    display.setFrameMemory(data)
+export class ViewBinaryGraphics {
+  static asCanvas(data: Uint8Array, typeName: string): HTMLCanvasElement {
+    const canvas = <HTMLCanvasElement>document.createElement("canvas")
+    const display = new ScreenDisplay(typeName, canvas)
+    const displayFormat = formatMap.get(typeName)
+    if (displayFormat) {
+      const displayData = displayFormat.deinterleaveFrame(data)
+      display.setFrameMemory(displayData)
+    }
     return canvas
   }
 }
@@ -721,7 +723,7 @@ export class ViewBinaryNajaPackedHires {
   static asCanvas(packedData: Uint8Array): HTMLCanvasElement | undefined {
     let hiresData = ViewBinaryNajaPackedHires.asHiresData(packedData)
     if (hiresData) {
-      return ViewBinaryHires.asCanvas(hiresData)
+      return ViewBinaryGraphics.asCanvas(hiresData, "hires")
     }
   }
 
@@ -764,7 +766,7 @@ export class ViewBinaryNajaPackedHires {
             count = 1
           }
         }
-        hiresData[HiresTable[y] + x] = value
+        hiresData[HiresInterleave[y] + x] = value
         count -= 1
         y -= 1
       }

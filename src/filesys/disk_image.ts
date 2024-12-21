@@ -144,35 +144,50 @@ export class TwoMGHeader {
 
 //------------------------------------------------------------------------------
 
+export enum SectorOrder {
+  Unknown = 0,
+  Dos33,
+  Prodos
+}
+
 export class DiskImage {
   protected fullData: Uint8Array
   private diskData: Uint8Array
+  public imageOrder: SectorOrder = SectorOrder.Unknown
+  public dosOrder: SectorOrder = SectorOrder.Unknown
   protected workingData?: Uint8Array
   protected isReadOnly: boolean
-  public isDos33: boolean
   private tmg?: TwoMGHeader
 
   constructor(typeName: string, data: Uint8Array, isReadOnly = false) {
     this.fullData = data
     this.diskData = this.fullData
     this.isReadOnly = isReadOnly
-    this.isDos33 = false
     switch (typeName) {
       case "dsk":
+        this.imageOrder = SectorOrder.Unknown
+        this.dosOrder = SectorOrder.Unknown
+        break
       case "do":
-        this.isDos33 = true
+        this.imageOrder = SectorOrder.Dos33
+        this.dosOrder = SectorOrder.Dos33
         break
       case "po":
       case "hdv":
+        this.imageOrder = SectorOrder.Prodos
+        this.dosOrder = SectorOrder.Prodos
         break
       case "2mg":
         this.tmg = new TwoMGHeader(this.fullData)
         this.tmg.verify()
         if (this.tmg.imageFormat == TwoMGFormat.Dos33) {
-          this.isDos33 = true
+          this.imageOrder = SectorOrder.Dos33
+          this.dosOrder = SectorOrder.Dos33
           // TODO: should the volume's lock be respected here?
           this.isReadOnly = this.tmg.dos33Locked
         } else if (this.tmg.imageFormat == TwoMGFormat.Prodos) {
+          this.imageOrder = SectorOrder.Prodos
+          this.dosOrder = SectorOrder.Prodos
           // TODO: anything else?
         } else if (this.tmg.imageFormat == TwoMGFormat.Nib) {
           throw new Error(".2mg NIB files not supported")
@@ -202,7 +217,7 @@ export class DiskImage {
   // used by Dos 3.3
 
   public readTrackSector(t: number, s: number): SectorData {
-    if (!this.isDos33) {
+    if (this.dosOrder != SectorOrder.Dos33) {
       throw new Error("readTrackSector not allowed on Prodos image")
     }
 
@@ -212,7 +227,7 @@ export class DiskImage {
 
     const offset = (t * 16 + s) * 256
     if (offset >= this.workingData.length) {
-      throw new Error("readTrackSector of track {$t} sector {$s} failed")
+      throw new Error(`readTrackSector of track ${t} sector ${s} failed`)
     }
     return { track: t, index: s, data: this.workingData.subarray(offset, offset + 256) }
   }
@@ -220,7 +235,7 @@ export class DiskImage {
   // used by Prodos
 
   public readBlock(index: number): BlockData {
-    if (this.isDos33) {
+    if (this.dosOrder != SectorOrder.Prodos) {
       throw new Error("readBlock not allowed on DOS 3.3 image")
     }
 
@@ -230,21 +245,42 @@ export class DiskImage {
 
     const offset = index * 512
     if (offset >= this.workingData.length) {
-      throw new Error("readBlock of block {$index} failed")
+      throw new Error(`readBlock of block ${index} failed`)
     }
     return { index, data: this.workingData.subarray(offset, offset + 512) }
   }
 
+  private readonly dos33ToLinear  = [ 0, 13, 11, 9, 7, 5, 3, 1, 14, 12, 10, 8, 6, 4, 2, 15 ]
+  private readonly prodosToLinear = [ 0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15 ]
+  private readonly linearToDos33  = [ 0, 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8, 15 ]
+  private readonly linearToProdos = [ 0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15 ]
+
   private snapWorkingData(): Uint8Array {
-    const data = new Uint8Array(this.diskData.length)
-    data.set(this.diskData)
-    return data
+    const workingData = new Uint8Array(this.diskData.length)
+    if (this.imageOrder == this.dosOrder) {
+      workingData.set(this.diskData)
+    } else if (this.imageOrder == SectorOrder.Dos33) {
+      this.deinterleaveTracks(this.diskData, workingData, this.prodosToLinear, this.linearToDos33)
+    } else if (this.imageOrder == SectorOrder.Prodos) {
+      this.deinterleaveTracks(this.diskData, workingData, this.dos33ToLinear, this.linearToProdos)
+    } else {
+      throw new Error("Unknown disk sector format")
+    }
+    return workingData
   }
 
   public commitChanges(): void {
     if (this.workingData) {
       if (!this.isReadOnly) {
-        this.diskData.set(this.workingData)
+        if (this.imageOrder == this.dosOrder) {
+          this.diskData.set(this.workingData)
+        } else if (this.imageOrder == SectorOrder.Dos33) {
+          this.interleaveTracks(this.workingData, this.diskData, this.prodosToLinear, this.linearToDos33)
+        } else if (this.imageOrder == SectorOrder.Prodos) {
+          this.interleaveTracks(this.workingData, this.diskData, this.dos33ToLinear, this.linearToProdos)
+        } else {
+          throw new Error("Unknown disk sector format")
+        }
       }
       this.workingData = undefined
     }
@@ -252,6 +288,32 @@ export class DiskImage {
 
   public revertChanges(): void {
     this.workingData = undefined
+  }
+
+  private deinterleaveTracks(srcData: Uint8Array, dstData: Uint8Array, toLinear: number[], toTarget: number[]) {
+    let offset = 0
+    for (let t = 0; t < 35; t += 1) {
+      for (let s = 0; s < 16; s += 1) {
+        const srcOffset = offset + toTarget[toLinear[s]] * 256
+        const dstOffset = offset + s * 256
+        const sectorData = srcData.subarray(srcOffset, srcOffset + 256)
+        dstData.set(sectorData, dstOffset)
+      }
+      offset += 16 * 256
+    }
+  }
+
+  private interleaveTracks(srcData: Uint8Array, dstData: Uint8Array, toLinear: number[], toTarget: number[]) {
+    let offset = 0
+    for (let t = 0; t < 35; t += 1) {
+      for (let s = 0; s < 16; s += 1) {
+        const srcOffset = offset + s * 256
+        const dstOffset = offset + toTarget[toLinear[s]] * 256
+        const sectorData = srcData.subarray(srcOffset, srcOffset + 256)
+        dstData.set(sectorData, dstOffset)
+      }
+      offset += 16 * 256
+    }
   }
 }
 

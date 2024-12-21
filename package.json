@@ -1,10 +1,10 @@
 {
 	"name": "rpwa2",
 	"displayName": "RPW A2",
-	"description": "Apple II HIRES graphics editor with ProDOS and DOS 3.3 file system providers",
+	"description": "Apple II graphics editor (Single/Double HIRES/LORES) with ProDOS and DOS 3.3 file system providers",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "1.0.1",
+	"version": "2.0.0",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
@@ -23,11 +23,14 @@
 		"prodos",
 		"dos 3.3",
 		"applesoft",
+		"basic",
 		"assembly",
 		"merlin",
 		"lisa",
+		"lores",
 		"hires",
 		"graphics",
+		"double",
 		"editor",
 		"retro"
 	],
@@ -133,7 +136,7 @@
 				"displayName": "Integer BASIC",
 				"selector": [
 					{
-						"filenamePattern": "*.BIN"
+						"filenamePattern": "*.INT"
 					}
 				]
 			},
@@ -151,7 +154,7 @@
 			},
 			{
 				"viewType": "rpwa2.PIC",
-				"displayName": "Apple II HIRES picture",
+				"displayName": "Apple II picture",
 				"selector": [
 					{
 						"filenamePattern": "*.PIC"

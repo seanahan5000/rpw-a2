@@ -483,12 +483,37 @@ export class ProdosVolFileEntry extends ProdosFileEntry {
 export class ProdosVolume {
 
   readonly blockSize = 512
-  readonly volumeHeaderBlock = 2
+  static readonly volumeHeaderBlock = 2
   protected image: DiskImage
   private totalBlocks: number
   private bitmapPointer: number
   private bitmapBlocks: number
   public volFileEntry: ProdosFileEntry
+
+  static CheckImage(image: DiskImage): boolean {
+    try {
+      const block = image.readBlock(ProdosVolume.volumeHeaderBlock)
+      if (block.data[0] == 0x00 && block.data[1] == 0x00) {
+        const entryLength = block.data[0x1F + 4]
+        const entriesPerBlock = block.data[0x20 + 4]
+        const entriesSize = entryLength * entriesPerBlock
+        if (entriesSize > 0 && entriesSize <= 512) {
+          // first entry must be allocated
+          if ((block.data[0x00 + 4] & 0xF0) == 0xF0) {
+            if ((block.data[0x00 + 4] & 0x0F) != 0) {
+              // name starts with A->Z
+              const char = block.data[0x01 + 4]
+              if (char >= 0x41 && char <= 0x5A) {
+                return true
+              }
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+    }
+    return false
+  }
 
   constructor(image: DiskImage, format: boolean = false) {
     this.image = image
@@ -501,7 +526,7 @@ export class ProdosVolume {
 
     // TODO: share this code
 
-    let block = this.readBlock(this.volumeHeaderBlock)
+    let block = this.readBlock(ProdosVolume.volumeHeaderBlock)
     const volSubDir = new ProdosVolSubDir(this, block, !format)
 
     // TODO: For now, be strict and require the image size exactly match the volume size.
@@ -512,7 +537,7 @@ export class ProdosVolume {
     this.bitmapPointer = volSubDir.bitmapPointer
 
     // fake block for creating volFileEntry
-    block = { index: this.volumeHeaderBlock, data: new Uint8Array(this.blockSize) }
+    block = { index: ProdosVolume.volumeHeaderBlock, data: new Uint8Array(this.blockSize) }
     this.volFileEntry = new ProdosVolFileEntry(this, block)
   }
 

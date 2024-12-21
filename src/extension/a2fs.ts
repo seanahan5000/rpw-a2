@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as vscode from 'vscode'
 import * as path from 'path'
-import { DiskImage, TwoMGHeader } from "../filesys/disk_image"
+import { DiskImage, SectorOrder, TwoMGHeader } from "../filesys/disk_image"
 import { FileEntry, ProdosVolume, ProdosFileEntry, FileType } from "../filesys/prodos"
 import { Dos33Volume } from '../filesys/dos33'
 
@@ -9,7 +9,6 @@ import { VerifiedProdosVolume } from "../filesys/test_prodos"
 import { VerifiedDos33Volume } from "../filesys/test_dos33"
 import { ViewMerlin, ViewLisa2 } from '../data_viewers'
 
-// TODO: maybe not update modTime is causing VSCode multi-volume weirdness?
 // TODO: mark volumes that fail validation as read-only
 
 //------------------------------------------------------------------------------
@@ -91,7 +90,31 @@ function createVolume(volumeUri: vscode.Uri, isReadOnly: boolean): Volume {
 
   let volume: Volume
   const diskImage = new FileDiskImage(pathName, ext, diskData, isReadOnly)
-  if (diskImage.isDos33) {
+
+  if (diskImage.imageOrder == SectorOrder.Unknown) {
+
+    const dosOrders   = [ SectorOrder.Dos33, SectorOrder.Prodos, SectorOrder.Prodos, SectorOrder.Unknown ]
+    const imageOrders = [ SectorOrder.Dos33, SectorOrder.Dos33,  SectorOrder.Prodos, SectorOrder.Unknown ]
+
+    for (let i = 0; i < dosOrders.length; i += 1) {
+      diskImage.revertChanges()
+      diskImage.dosOrder = dosOrders[i]
+      diskImage.imageOrder = imageOrders[i]
+      if (diskImage.dosOrder == SectorOrder.Dos33) {
+        if (Dos33Volume.CheckImage(diskImage)) {
+          break
+        }
+      } else if (diskImage.dosOrder == SectorOrder.Prodos) {
+        if (ProdosVolume.CheckImage(diskImage)) {
+          break
+        }
+      } else {
+        throw new Error(`Unknown disk volume sector order`)
+      }
+    }
+  }
+
+  if (diskImage.dosOrder == SectorOrder.Dos33) {
     if (verifiedVolume) {
       volume = new VerifiedDos33Volume(diskImage, reformat)
     } else {
@@ -341,7 +364,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
 
         const fileInfo = this.getCleanFileName(volume, uri)
 
-        // an empty file is assumed to be a .PIC
+        // an empty file is assumed to be a HIRES .PIC
         if (content.length == 0) {
           content = new Uint8Array(0x1ff8)
           fileInfo.type = FileType.BIN
@@ -638,20 +661,27 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         name += "_.Y"
       }
     } else if (type == FileType.BIN) {
-      let defaultBin = true
+      let suffix = ".BIN"
       const binLength = fileEntry.getContents()?.length ?? 0x0000
       if (binLength >= 0x1FF8 && binLength <= 0x2000) {
         if (fileEntry.auxType == 0x2000 || fileEntry.auxType == 0x4000) {
-          if (!fileEntry.name.endsWith(".PIC")) {
-            name += "_.PIC"
-          }
-          defaultBin = false
+          suffix = ".PIC"
+        }
+      } else if (binLength == 0x0400) {
+        if (fileEntry.auxType == 0x0400) {
+          suffix = ".PIC"
+        }
+      } else if (binLength == 0x0800) {
+        if (fileEntry.auxType == 0x0400) {
+          suffix = ".PIC"
+        }
+      } else if (binLength == 0x4000) {
+        if (fileEntry.auxType == 0x2000) {
+          suffix = ".PIC"
         }
       }
-      if (defaultBin) {
-        name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
-        name += ".BIN"
-      }
+      name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
+      name += suffix
     } else if (type == FileType.SYS) {
       name += "_$" + fileEntry.auxType.toString(16).toUpperCase().padStart(4, "0")
       name += ".SYS"
@@ -747,7 +777,9 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
           // check for artificial suffixes
           if (typeStr == "PIC") {
             fileType = FileType.BIN
-            auxType = 0x2000
+            if (auxType == 0x0000) {
+              auxType = 0x2000
+            }
           } else if (typeStr == "L") {
             fileType = FileType.Y
             auxType = 0x1800
