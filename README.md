@@ -6,8 +6,7 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 
 <img src="images/rpwa2.gif"/>
 
-
-#### Graphics Editing Tools
+##### Editing Tools
 
 <img src="images/tools.gif"/>
 
@@ -34,6 +33,8 @@ This extension has been tested by opening and verifying most images in the Asimo
 The file conversion functionality in RPW A2 is enough to access old code and graphics, but is not intendend as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like Ciderpress.
 
 ### Known Problems
+
+* With multiple images mounted, adding a new file or directory to a volume appears to add it to all volumes.  The operation is correctly applied to just the target volume, but VSCode incorrectly updates the display of all volumes.  Switching away from the VSCode application and then back refreshes the display with the actual correct volume contents.
 
 * File system error information such as Disk Full is buried in the VSCode error reporting dialog and not visible without viewing the full message.  It's unclear how to make VSCode display just the relevant information without the extra noise.
 
