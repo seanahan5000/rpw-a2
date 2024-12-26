@@ -443,7 +443,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
           if (oldVolume instanceof Dos33Volume) {
             throw new Error("Not allowed on a Dos 3.3 volume")
           }
-          if (path.posix.basename(oldUri.path) != newName) {
+          if (oldFile.name != newName) {
             throw new Error("Expected old and new name to match")
           }
           const newParentDir = this.mustFindParentDir(newVolume, newUri)
@@ -701,11 +701,13 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     let suffix = ""
     let typeStr: string | undefined
     let auxStr: string | undefined
+    let hasCopySuffix = false
 
     // NOTE: strip out " copy" that VSCode incorrectly inserts
     let n = base.lastIndexOf(" copy.")
     if (n >= 0) {
       base = base.substring(0, n) + base.substring(n + 5)
+      hasCopySuffix = true
     }
 
     // strip extra extensions
@@ -732,6 +734,12 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     if (n >= 0) {
       suffix = base.substring(n)    // including "."
       base = base.substring(0, n)
+    }
+
+    // put the copy suffix back in at correct location
+    if (hasCopySuffix) {
+      // TODO: something shorter?
+      base += " COPY"
     }
 
     let lengthLimit

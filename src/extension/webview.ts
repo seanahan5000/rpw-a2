@@ -125,7 +125,8 @@ class Webview implements IMachineDisplay, IHostHooks {
   // TODO: too much copy/paste here
   public setDisplayMemory(frame: PixelData, page: number): void {
     if (this.graphicsData) {
-      if (this.graphicsData.length == 0x0400) {         // lores
+      const size = this.graphicsData.length
+      if (size == 0x0400) {         // lores
         let srcOffset = 0
         for (let y = 0; y < frame.bounds.height; y += 1) {
           const address = TextLoresInterleave[y]
@@ -134,7 +135,7 @@ class Webview implements IMachineDisplay, IHostHooks {
           }
           srcOffset += frame.byteWidth
         }
-      } else if (this.graphicsData.length == 0x0800) {  // double-lores
+      } else if (size == 0x0800) {  // double-lores
         let srcOffset = 0
         for (let y = 0; y < frame.bounds.height; y += 1) {
           const address = TextLoresInterleave[y]
@@ -145,7 +146,7 @@ class Webview implements IMachineDisplay, IHostHooks {
           }
           srcOffset += frame.byteWidth
         }
-      } else if (this.graphicsData.length == 0x2000) {  // hires
+      } else if (size >= 0x1FF8 && size <= 0x2000) {    // hires
         let srcOffset = 0
         for (let y = 0; y < frame.bounds.height; y += 1) {
           const address = HiresInterleave[y]
@@ -154,7 +155,7 @@ class Webview implements IMachineDisplay, IHostHooks {
           }
           srcOffset += frame.byteWidth
         }
-      } else if (this.graphicsData.length == 0x4000) {  // double-hires
+      } else if (size == 0x4000) {  // double-hires
         let srcOffset = 0
         for (let y = 0; y < frame.bounds.height; y += 1) {
           const address = HiresInterleave[y]

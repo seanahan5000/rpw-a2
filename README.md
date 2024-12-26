@@ -1,10 +1,15 @@
 This Retro Programmer's Workshop (RPW) extension provides VSCode editor support for Apple II graphics files and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for other related funtionality.)
 
-<img src="images/hires.gif"/>
+New for version 2.0: Graphics editor support for double-HIRES and double-LORES graphics and a full suite of pixel editing tools.
 
-#### HIRES Graphics Editor
+#### Apple Graphics Editor
 
-<img src="images/hires.png"/>
+<img src="images/rpwa2.gif"/>
+
+
+#### Graphics Editing Tools
+
+<img src="images/tools.gif"/>
 
 ##### NOTES
 

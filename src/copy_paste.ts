@@ -144,8 +144,22 @@ export function imageFromText(clipText: string, screenFormat: DisplayFormat): { 
       try {
         header = JSON.parse(srcLine.comment.slice(1))
         if (header?.format !== undefined) {
-          if (header?.format != screenFormat.name) {
-            return {}
+          if (header.format != screenFormat.name) {
+            if (header.format.startsWith("lores")) {
+              if (screenFormat.name.startsWith("dlores")) {
+                // allow this conversion
+              } else {
+                return {}
+              }
+            } else if (header.format.startsWith("dlores")) {
+              if (screenFormat.name.startsWith("lores")) {
+                // allow this conversion
+              } else {
+                return {}
+              }
+            } else {
+              return {}
+            }
           }
         }
       } catch {

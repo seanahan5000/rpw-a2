@@ -12,7 +12,7 @@
 //    - auto-scroll in zoom
 //  - polygons, curves, etc.
 //  - smart copy/paste
-//    - to/from .png
+//    - to/from .png, w/dithering
 //    - convert hires <-> dhires
 //  - double-click with lasso to select object
 //    - based on select all
@@ -26,6 +26,7 @@
 //    ? hover hilite
 //  ? "detents" at byte boundaries on contrained selection drag
 //  ? bytewise transparency for Game
+//  ? right click and drag for grab
 
 // Generalizing
 //  - display mode decoupled from paint display
@@ -39,6 +40,7 @@
 //    - per-layer undo history
 //    - compositing between layers
 //    ? mask editing for Game monsters
+//    ? show background layer/image for tracing purposes
 
 import { IHostHooks } from "../shared"
 import { Point, Size, Rect, pointInRect, rectIsEmpty, PixelData } from "../shared"
@@ -317,12 +319,12 @@ class ZoomDisplay extends ScreenDisplay {
     }
   }
 
-  protected frameFromDisplayFloatClip(displayPt: Point): Point {
-    return this.frameFromDisplay(displayPt, "none", true)
+  protected frameFromDisplayRoundClip(displayPt: Point): Point {
+    return this.frameFromDisplay(displayPt, "round", true)
   }
 
-  protected frameFromDisplayFloatNoClip(displayPt: Point): Point {
-    return this.frameFromDisplay(displayPt, "none", false)
+  protected frameFromDisplayRoundNoClip(displayPt: Point): Point {
+    return this.frameFromDisplay(displayPt, "round", false)
   }
 
   protected frameFromDisplayFloorClip(displayPt: Point): Point {
@@ -349,6 +351,9 @@ class ZoomDisplay extends ScreenDisplay {
     } else if (mode == "ceil") {
       framePt.x = Math.ceil(framePt.x)
       framePt.y = Math.ceil(framePt.y)
+    } else if (mode == "round") {
+      framePt.x = Math.round(framePt.x)
+      framePt.y = Math.round(framePt.y)
     }
 
     if (clip) {
@@ -413,7 +418,7 @@ class ZoomDisplay extends ScreenDisplay {
   setZoomLevel(newZoomLevel: number, canvasPt?: Point) {
 
     // compute this before totalScale changes
-    const framePt = canvasPt ? this.frameFromDisplayFloatClip(this.displayFromCanvasPt(canvasPt)) : {x:0, y:0}
+    const framePt = canvasPt ? this.frameFromDisplayRoundClip(this.displayFromCanvasPt(canvasPt)) : {x:0, y:0}
 
     let oldZoomScale = this.zoomScale
     this.zoomLevel = newZoomLevel
@@ -1328,8 +1333,8 @@ export class PaintDisplay extends ZoomDisplay {
   }
 
   toolArrow(direction: number, modifiers: number) {
-    if (modifiers & ModifierKeys.SHIFT) {
-      if (this.tool == Tool.Select || this.tool == Tool.Lasso) {
+    if (this.tool == Tool.Select || this.tool == Tool.Lasso) {
+      if (!rectIsEmpty(this.toolRect)) {
         this.liftSelection(modifiers)
         if (direction == 0) {
           this.toolRect.y -= 1
@@ -1340,9 +1345,12 @@ export class PaintDisplay extends ZoomDisplay {
         } else if (direction == 3) {
           this.toolRect.x += 1
         }
+        this.setToolRect(this.toolRect)
         this.moveSelection()
+        return
       }
-    } else if (direction & 1) {
+    }
+    if (direction & 1) {
       let color = (modifiers & ModifierKeys.OPTION) ? this.backColor : this.foreColor
       const delta = (direction & 2) - 1
       color += delta
@@ -1441,7 +1449,7 @@ export class PaintDisplay extends ZoomDisplay {
   }
 
   private updateLine(firstUpdate: boolean, modifiers: number) {
-    this.frameCurrPt = this.frameFromDisplayFloatNoClip(this.displayCurrPt)
+    this.frameCurrPt = this.frameFromDisplayFloorNoClip(this.displayCurrPt)
     if (firstUpdate) {
       this.captureUndo()
       this.frameStartPt = this.frameCurrPt
@@ -1459,28 +1467,8 @@ export class PaintDisplay extends ZoomDisplay {
     if (this.dragFromCenter) {
       const width = (endPt.x - startPt.x) * 2
       const height = (endPt.y - startPt.y) * 2
-      startPt.x = Math.round(endPt.x - width)
-      startPt.y = Math.round(endPt.y - height)
-      endPt.x = Math.round(endPt.x)
-      endPt.y = Math.round(endPt.y)
-    } else {
-      if (xMajor) {
-        if (startPt.x <= endPt.x) {
-          startPt.x = Math.floor(startPt.x)
-        } else {
-          startPt.x = Math.ceil(startPt.x)
-        }
-        startPt.y = Math.round(startPt.y)
-      } else {
-        if (startPt.y <= endPt.y) {
-          startPt.y = Math.floor(startPt.y)
-        } else {
-          startPt.y = Math.ceil(startPt.y)
-        }
-        startPt.x = Math.round(startPt.x)
-      }
-      endPt.x = Math.round(endPt.x)
-      endPt.y = Math.round(endPt.y)
+      startPt.x = endPt.x - width
+      startPt.y = endPt.y - height
     }
     this.frame.copyFrom(this.undoHistory[this.undoCurrentIndex - 1].frame)
     const dstRect = { x: startPt.x, y: startPt.y, width: 1, height: 1 }
@@ -1499,7 +1487,7 @@ export class PaintDisplay extends ZoomDisplay {
     if (modifiers & ModifierKeys.SHIFT) {
       this.constrainSize()
     }
-    this.frameCurrPt = this.frameFromDisplayFloatNoClip(this.displayCurrPt)
+    this.frameCurrPt = this.frameFromDisplayRoundNoClip(this.displayCurrPt)
     if (firstUpdate) {
       this.captureUndo()
       this.frameStartPt = this.frameCurrPt
@@ -1649,16 +1637,18 @@ export class PaintDisplay extends ZoomDisplay {
   private updateBucket(firstUpdate: boolean, modifiers: number) {
     if (firstUpdate) {
       this.captureUndo()
-      this.frameStartPt = this.frameFromDisplayFloorClip(this.displayCurrPt)
-      const fillColor = this.frame.getColorAt(this.frameStartPt)
-      if (fillColor !== undefined) {
-        let fillMask = this.frame.createMask(fillColor)
-        const floodFill = new FloodFill(fillMask)
-        fillMask = floodFill.fill(this.frameStartPt)
-        this.frame.fillRect(this.frame.bounds, this.foreColor, fillMask)
-        this.updateToMemory()
+      this.frameStartPt = this.frameFromDisplayFloorNoClip(this.displayCurrPt)
+      if (pointInRect(this.frameStartPt, this.frame.bounds)) {
+        const fillColor = this.frame.getColorAt(this.frameStartPt)
+        if (fillColor !== undefined) {
+          let fillMask = this.frame.createMask(fillColor)
+          const floodFill = new FloodFill(fillMask)
+          fillMask = floodFill.fill(this.frameStartPt)
+          this.frame.fillRect(this.frame.bounds, this.foreColor, fillMask)
+          this.updateToMemory()
+        }
+        this.setCoordinateInfo(this.frameStartPt)
       }
-      this.setCoordinateInfo(this.frameStartPt)
     }
   }
 
@@ -1802,7 +1792,7 @@ export class PaintDisplay extends ZoomDisplay {
 
   private updateSelection(firstUpdate: boolean, modifiers: number) {
     if (firstUpdate) {
-      this.frameStartPt = this.frameFromDisplayFloorClip(this.displayCurrPt)
+      this.frameStartPt = this.frameFromDisplayRoundClip(this.displayCurrPt)
       let hitSelection = pointInRect(this.frameStartPt, this.toolRect)
       if (this.tool == Tool.Lasso && hitSelection && this.selectMask) {
         const pt: Point = {
@@ -1829,7 +1819,7 @@ export class PaintDisplay extends ZoomDisplay {
 
     if (this.selectBits) {
       this.constrainDirection()
-      this.frameCurrPt = this.frameFromDisplayFloorNoClip(this.displayCurrPt)
+      this.frameCurrPt = this.frameFromDisplayRoundNoClip(this.displayCurrPt)
       this.toolRect.x = this.frameCurrPt.x - this.frameStartPt.x
       this.toolRect.y = this.frameCurrPt.y - this.frameStartPt.y
       if (this.constrainMode == ConstrainMode.Horizontal) {
@@ -1847,7 +1837,7 @@ export class PaintDisplay extends ZoomDisplay {
           this.constrainSize()
         }
       }
-      this.frameCurrPt = this.frameFromDisplayFloatClip(this.displayCurrPt)
+      this.frameCurrPt = this.frameFromDisplayRoundClip(this.displayCurrPt)
       if (this.tool == Tool.Lasso) {
         this.toolPoints.push(this.frameCurrPt)
         this.setCoordinateInfo(this.frameFromDisplayFloorClip(this.displayCurrPt))
@@ -2096,7 +2086,7 @@ export class PaintDisplay extends ZoomDisplay {
       }
       return
     }
-    const framePt = canvasPt ? this.frameFromDisplayFloatClip(this.displayFromCanvasPt(canvasPt)) : canvasPt
+    const framePt = canvasPt ? this.frameFromDisplayRoundClip(this.displayFromCanvasPt(canvasPt)) : canvasPt
     const result = imageFromText(clipText, this.frame.format)
     if (result.pixelData) {
       const bitmap = this.format.decode(result.pixelData)

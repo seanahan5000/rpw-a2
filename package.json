@@ -51,7 +51,7 @@
 		"onLanguage:2mg",
 		"onFileSystem:2mg"
 	],
-	"icon": "images/rpwa2-icon.png",
+	"icon": "rpwa2-icon.png",
 	"main": "./out/extension",
 	"contributes": {
 		"configuration": {

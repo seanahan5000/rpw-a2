@@ -523,7 +523,8 @@ export class DisplayView {
 
     let str = ""
 
-    if (this.project && this.project.isNaja && this.getTool() == Tool.Select) {
+    const isGame = this.project && this.project.isNaja
+    if (isGame && this.paintDisplay.format.name.startsWith("hires") && this.getTool() == Tool.Select) {
       str = `PictMoveTo ${x1};${y1}`
       if (result.size && (width != 0 || height != 0)) {
         const x2 = x1 + width
@@ -543,9 +544,12 @@ export class DisplayView {
           str += `<br>W: ${result.size.width}, H: ${result.size.height}`
         }
       } else {
-        str = `X: ${x1}, Y: ${y1}`
         if (result.size && width && height) {
+          str = `X1: ${x1}, Y1: ${y1}`
+          str += `<br>X2: ${x1 + result.size.width - 1}, Y2: ${y1 + result.size.height - 1}`
           str += `<br>W: ${result.size.width}, H: ${result.size.height}`
+        } else {
+          str = `X: ${x1}, Y: ${y1}`
         }
       }
     }

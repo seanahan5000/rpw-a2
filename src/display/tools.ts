@@ -126,7 +126,7 @@ export const ToolHelp: string[] = [
   Use option key to stamp a copy<br>
   Use control key to grab anywhere<br>
   Use shift key to constrain drag direction<br>
-  Use shift-arrow keys to move<br>
+  Use arrow keys to move<br>
   <br>
   <b>Modifying a Selection:</b><br>
   Delete key to delete<br>

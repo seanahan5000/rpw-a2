@@ -5,13 +5,15 @@
 Major rewrite of graphics editor to support more graphics formats, along with new editing tools.
 
 #### Added:
-* LORES, Double LORES, and Double HIRES editing support
+* LORES, Double-LORES, and Double-HIRES editing support
 * Lasso, text eraser, paint bucket, dropper, brush, line, and oval tools
 * Custom cursors for tools
 * Floating/hover help with much more detail
 
 #### Fixed:
 * Detection of ProDOS order sectors in .dsk images
+* Dragging files into ProDOS subdirectories
+* Copy/paste of file in same directory
 
 ### [1.0.1] - 2024-04-05
 

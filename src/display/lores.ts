@@ -166,8 +166,9 @@ export class DoubleLoresFormat extends LoresFormat {
     return { x: 7, y: 8 }
   }
 
-  public calcAddress(x: number, y: number, pageIndex: number): number {
-    return ((x & 1) ? 0x0400 : 0x10400) + pageIndex * 0x0400 + TextLoresInterleave[y] + Math.floor(x / 2)
+  public calcAddress(pixelX: number, pixelY: number, pageIndex: number): number {
+    return ((pixelX & 1) ? 0x0400 : 0x10400) + pageIndex * 0x0400
+      + TextLoresInterleave[Math.floor(pixelY / 2)] + Math.floor(pixelX / 2)
   }
 
   public calcByteColumn(pixelX: number): number {
