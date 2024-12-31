@@ -1,5 +1,13 @@
 # RPW A2 Changelog
 
+### [2.0.1] - 2024-12-30
+
+Rework URI handling in order to fix VSCode EXPLORER view drawing weirdness.
+
+#### Fixed:
+* New files and folders showing in all mounted volumes instead of just the target.
+* Incorrect file name being displayed after rename.
+
 ### [2.0.0] - 2024-12-21
 
 Major rewrite of graphics editor to support more graphics formats, along with new editing tools.

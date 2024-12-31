@@ -34,8 +34,6 @@ The file conversion functionality in RPW A2 is enough to access old code and gra
 
 ### Known Problems
 
-* With multiple images mounted, adding a new file or directory to a volume appears to add it to all volumes.  The operation is correctly applied to just the target volume, but VSCode incorrectly updates the display of all volumes.  Switching away from the VSCode application and then back refreshes the display with the actual correct volume contents.
-
 * File system error information such as Disk Full is buried in the VSCode error reporting dialog and not visible without viewing the full message.  It's unclear how to make VSCode display just the relevant information without the extra noise.
 
 #### ProDOS

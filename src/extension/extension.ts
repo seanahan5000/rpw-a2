@@ -19,15 +19,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(ViewerProvider.register(context, "LST"))
 
   // TODO: could this be made to work with multiple volumes at the same time?
-  context.subscriptions.push(vscode.commands.registerCommand('extension.mountApple2FileSystem', async (uri: vscode.Uri) => {
+  context.subscriptions.push(vscode.commands.registerCommand('extension.mountApple2FileSystem',
+    async (uri: vscode.Uri) => {
 
-    await vscode.commands.executeCommand("vscode.open", uri)
-    await vscode.commands.executeCommand("workbench.action.closeActiveEditor")
+      await vscode.commands.executeCommand("vscode.open", uri)
+      await vscode.commands.executeCommand("workbench.action.closeActiveEditor")
 
-    const wsUri = vscode.Uri.parse(`dsk:/?${uri}`)
-    const name = vscode.workspace.asRelativePath(uri, true)
-    const index = vscode.workspace.workspaceFolders?.length || 0
-    const workspaceFolder: vscode.WorkspaceFolder = { uri: wsUri, name, index }
-    vscode.workspace.updateWorkspaceFolders(index, 0, workspaceFolder)
-  }))
+      const dskUri = vscode.Uri.parse(`dsk:${uri.path}`, true)
+      const name = vscode.workspace.asRelativePath(uri, true)
+      const index = vscode.workspace.workspaceFolders?.length || 0
+      const workspaceFolder: vscode.WorkspaceFolder = { uri: dskUri, name, index }
+      vscode.workspace.updateWorkspaceFolders(index, 0, workspaceFolder)
+    }
+  ))
 }

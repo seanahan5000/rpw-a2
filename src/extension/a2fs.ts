@@ -137,9 +137,20 @@ function createVolume(volumeUri: vscode.Uri, isReadOnly: boolean): Volume {
 
 //------------------------------------------------------------------------------
 
+type VolumeEntry = {
+  uri: vscode.Uri
+  volume: Volume
+}
+
+type VolumeAndSubPath = {
+  volume: Volume
+  subPath: string   // path within volume
+  uri: vscode.Uri   // full URI for error reporting
+}
+
 export class Apple2FileSystem implements vscode.FileSystemProvider {
 
-  private volumes = new Map<string, Volume>()
+  private volumeEntries: VolumeEntry[] = []
 
   private bufferedEvents: vscode.FileChangeEvent[] = []
   private fireSoonTimer?: NodeJS.Timer
@@ -164,26 +175,33 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
   }
 
   public async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-    let volume: Volume | undefined
+    let volumeEntry: VolumeEntry | undefined
     try {
-      const volumeUri = vscode.Uri.parse(uri.query)
-      volume = this.volumes.get(volumeUri.path)
-      if (!volume) {
-        // TODO: get readOnly state from actual image file?
-        const isReadOnly = false
-        volume = createVolume(volumeUri, isReadOnly)
-        this.volumes.set(volumeUri.path, volume)
+
+      volumeEntry = this.findVolume(uri)
+      if (!volumeEntry) {
+        const ext = path.extname(uri.path).toLowerCase()
+        if (ext == ".dsk" || ext == ".do" || ext == ".po" || ext == "2mg" || ext == "hdv") {
+          // TODO: get readOnly state from actual image file?
+          const isReadOnly = false
+          const volume = createVolume(uri, isReadOnly)
+          volumeEntry = { uri, volume }
+          this.volumeEntries.push(volumeEntry)
+        } else {
+          throw vscode.FileSystemError.FileNotFound(uri)
+        }
       }
 
-      const fileName = path.posix.basename(uri.path)
-      const dirName = this.getDirName(uri)
-      if (dirName == "" && fileName == "") {
+      const subPath = uri.path.substring(volumeEntry.uri.path.length)
+      if (!subPath) {
+        const volumeUri = vscode.Uri.parse(uri.path)
         const { ctime, mtime, size } = await vscode.workspace.fs.stat(volumeUri)
         return { type: vscode.FileType.Directory, ctime, mtime, size }
       }
 
-      const parentDir = this.mustFindParentDir(volume, uri)
-      const file = this.mustFindFileOrDir(volume, parentDir, uri)
+      const vasp = { volume: volumeEntry.volume, subPath, uri }
+      const parentDir = this.mustFindParentDir(vasp)
+      const file = this.mustFindFileOrDir(vasp, parentDir)
 
       // TODO: get time information from actual files
       const ctime = Date.now()
@@ -200,18 +218,18 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         return fileStat
       }
     } catch (e: any) {
-      volume?.revertChanges()
+      volumeEntry?.volume.revertChanges()
       throw e
     }
   }
 
   public async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
-    let volume: Volume | undefined
+    let vasp: VolumeAndSubPath | undefined
     try {
-      volume = this.getVolume(uri)
-      const dir = this.mustFindDir(volume, uri)
+      vasp = this.getVolumeAndSubPath(uri)
+      const dir = this.mustFindDir(vasp)
       const entries: [string, vscode.FileType][] = []
-      volume.forEachAllocatedFile(dir, (fileEntry: FileEntry) => {
+      vasp.volume.forEachAllocatedFile(dir, (fileEntry: FileEntry) => {
         const fileName = this.getFullFileName(fileEntry)
         if (fileEntry.type == FileType.DIR) {
           entries.push([fileName, vscode.FileType.Directory])
@@ -223,29 +241,29 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       // NOTE: no need to commitChanges on read-only operation
       return entries
     } catch (e: any) {
-      volume?.revertChanges()
+      vasp?.volume.revertChanges()
       throw e
     }
   }
 
   public createDirectory(uri: vscode.Uri): void | Thenable<void> {
-    let volume: Volume | undefined
+    let vasp: VolumeAndSubPath | undefined
     try {
-      volume = this.getVolume(uri)
-      if (volume instanceof Dos33Volume) {
+      vasp = this.getVolumeAndSubPath(uri)
+      if (vasp.volume instanceof Dos33Volume) {
         throw new Error("Not allowed on a Dos 3.3 volume")
       }
 
-      const parentDir = this.mustFindParentDir(volume, uri)
-      let file = this.mayFindFileOrDir(volume, parentDir, uri)
+      const parentDir = this.mustFindParentDir(vasp)
+      let file = this.mayFindFileOrDir(vasp, parentDir)
       if (file) {
         // TODO: should create on existing directory be ignored?
         vscode.FileSystemError.FileExists(uri)
       }
 
       const baseName = path.posix.basename(uri.path)
-      volume.createFile(parentDir, baseName, FileType.DIR, 0x0000)
-      volume.commitChanges()
+      vasp.volume.createFile(parentDir, baseName, FileType.DIR, 0x0000)
+      vasp.volume.commitChanges()
 
       const dirName = uri.with({ path: path.posix.dirname(uri.path) })
       this.fireSoon(
@@ -253,17 +271,17 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         { type: vscode.FileChangeType.Created, uri: uri }
       )
     } catch (e: any) {
-      volume?.revertChanges()
+      vasp?.volume.revertChanges()
       throw e
     }
   }
 
   public async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    let volume: Volume | undefined
+    let vasp: VolumeAndSubPath | undefined
     try {
-      volume = this.getVolume(uri)
-      const file = this.mustFindFile(volume, uri)
-      const fileData = volume.getFileContents(file)
+      vasp = this.getVolumeAndSubPath(uri)
+      const file = this.mustFindFile(vasp)
+      const fileData = vasp.volume.getFileContents(file)
       const config = vscode.workspace.getConfiguration("rpwa2.filesystem.convert")
 
       let convertedData: Uint8Array | undefined
@@ -291,11 +309,11 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         }
       }
 
-      let fileCache: Map<string, FileCacheEntry> = (volume as any).fileCache
+      let fileCache: Map<string, FileCacheEntry> = (vasp.volume as any).fileCache
       if (convertedData) {
         if (!fileCache) {
           fileCache = new Map<string, FileCacheEntry>();
-          (volume as any).fileCache = fileCache
+          (vasp.volume as any).fileCache = fileCache
         }
         fileCache.set(uri.path, { fileData, convertedData })
         return convertedData
@@ -304,7 +322,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         return fileData
       }
     } catch (e: any) {
-      volume?.revertChanges()
+      vasp?.volume.revertChanges()
       throw e
     }
   }
@@ -313,11 +331,11 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
 
     // TODO: could NoPermissions handle disk full?
 
-    let volume: Volume | undefined
+    let vasp: VolumeAndSubPath | undefined
     try {
-      volume = this.getVolume(uri)
-      const parentDir = this.mustFindParentDir(volume, uri)
-      let file = this.mayFindFileOrDir(volume, parentDir, uri)
+      vasp = this.getVolumeAndSubPath(uri)
+      const parentDir = this.mustFindParentDir(vasp)
+      let file = this.mayFindFileOrDir(vasp, parentDir)
       if (file) {
         if (file.type == FileType.DIR) {
           throw vscode.FileSystemError.FileIsADirectory(uri)
@@ -329,8 +347,8 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
             throw Error("Write of read-only file attempted")
           }
 
-          volume.setFileContents(file, content)
-          volume.commitChanges()
+          vasp.volume.setFileContents(file, content)
+          vasp.volume.commitChanges()
           uri = this.renameUri(uri, file)
           // TODO: fire a deleted/created instead?
         } else {
@@ -342,7 +360,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         //  so allow writing of fileData if the contents matches known
         //  converted data cached on file read.
 
-        const fileCache: Map<string, FileCacheEntry> = (volume as any).fileCache
+        const fileCache: Map<string, FileCacheEntry> = (vasp.volume as any).fileCache
         const cacheEntry = fileCache?.get(uri.path)
         if (cacheEntry) {
           // compare contents against cached convertedData
@@ -362,7 +380,7 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
           content = cacheEntry.fileData
         }
 
-        const fileInfo = this.getCleanFileName(volume, uri)
+        const fileInfo = this.getCleanFileName(vasp)
 
         // an empty file is assumed to be a HIRES .PIC
         if (content.length == 0) {
@@ -371,9 +389,9 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
           fileInfo.auxType = 0x2000
         }
 
-        file = volume.createFile(parentDir, fileInfo.name, fileInfo.type, fileInfo.auxType)
-        volume.setFileContents(file, content)
-        volume.commitChanges()
+        file = vasp.volume.createFile(parentDir, fileInfo.name, fileInfo.type, fileInfo.auxType)
+        vasp.volume.setFileContents(file, content)
+        vasp.volume.commitChanges()
 
         uri = this.renameUri(uri, file)
         this.fireSoon({ type: vscode.FileChangeType.Created, uri })
@@ -383,23 +401,23 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       // *** dir changed? ***
       this.fireSoon({ type: vscode.FileChangeType.Changed, uri })
     } catch (e: any) {
-      volume?.revertChanges()
+      vasp?.volume.revertChanges()
       throw e
     }
   }
 
   public delete(uri: vscode.Uri, options: { recursive: boolean; }): void | Thenable<void> {
-    let volume: Volume | undefined
+    let vasp: VolumeAndSubPath | undefined
     try {
-      volume = this.getVolume(uri)
-      const parentDir = this.mustFindParentDir(volume, uri)
-      const file = this.mustFindFileOrDir(volume, parentDir, uri)
+      vasp = this.getVolumeAndSubPath(uri)
+      const parentDir = this.mustFindParentDir(vasp)
+      const file = this.mustFindFileOrDir(vasp, parentDir)
 
       // REVIEW: When recursively deleting directory contents,
       //  do change events need to be fired for every file deleted
       //  or will VSCode handle that?
-      volume.deleteFile(parentDir, file, options.recursive)
-      volume.commitChanges()
+      vasp.volume.deleteFile(parentDir, file, options.recursive)
+      vasp.volume.commitChanges()
 
       // TODO: force rescan of directory so delete files are removed
 
@@ -409,78 +427,90 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         { type: vscode.FileChangeType.Deleted, uri: uri }
       )
     } catch (e: any) {
-      volume?.revertChanges()
+      vasp?.volume.revertChanges()
       throw e
     }
   }
 
   public rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean; }): void | Thenable<void> {
-    let oldVolume: Volume | undefined
-    let newVolume: Volume | undefined
+    let oldVasp: VolumeAndSubPath | undefined
+    let newVasp: VolumeAndSubPath | undefined
     try {
-      oldVolume = this.getVolume(oldUri)
-      newVolume = this.getVolume(newUri)
+      oldVasp = this.getVolumeAndSubPath(oldUri)
+      newVasp = this.getVolumeAndSubPath(newUri)
 
       // TODO: check new name for auxType information
       // TODO: look at options.overwrite
 
-      const oldDirName = this.getDirName(oldUri)
-      const oldParentDir = this.mustFindParentDir(oldVolume, oldUri)
-      const oldFile = this.mustFindFileOrDir(oldVolume, oldParentDir, oldUri)
+      const oldDirName = this.getDirName(oldVasp.subPath)
+      const oldParentDir = this.mustFindParentDir(oldVasp)
+      const oldFile = this.mustFindFileOrDir(oldVasp, oldParentDir)
 
-      const newDirName = this.getDirName(newUri)
-      const newInfo = this.getCleanFileName(newVolume, newUri)
+      const newDirName = this.getDirName(newVasp.subPath)
+      let newInfo = this.getCleanFileName(newVasp, newDirName)
       let newName = newInfo.name
 
       // move/rename file within volume
-      if (newVolume == oldVolume) {
-
+      if (newVasp.volume == oldVasp.volume) {
         // is path the same for both old and new?
         if (oldDirName == newDirName) {
-          // simple rename
-          oldVolume.renameFile(oldParentDir, oldFile, newName)
+          // simple file rename
+          // NOTE: omit newDirName so file name doesn't get
+          //  stripped of the directory name
+          const newInfo2 = this.getCleanFileName(newVasp)
+          oldVasp.volume.renameFile(oldParentDir, oldFile, newInfo2.name)
         } else {
-          if (oldVolume instanceof Dos33Volume) {
+          if (oldVasp.volume instanceof Dos33Volume) {
             throw new Error("Not allowed on a Dos 3.3 volume")
           }
+          const newParentDir = this.mustFindParentDir(newVasp)
+          const newFile = oldVasp.volume.moveFile(oldFile, newParentDir)
           if (oldFile.name != newName) {
-            throw new Error("Expected old and new name to match")
+            newVasp.volume.renameFile(newParentDir, newFile, newName)
           }
-          const newParentDir = this.mustFindParentDir(newVolume, newUri)
-          oldVolume.moveFile(oldFile, newParentDir)
         }
       } else {
         // move a file/directory from one volume to another
         if (oldFile.type == FileType.DIR) {
-
-          if (newVolume instanceof Dos33Volume) {
+          // move directory
+          if (newVasp.volume instanceof Dos33Volume) {
             throw new Error("Not allowed on a Dos 3.3 volume")
           }
-          const newFile = <ProdosFileEntry>this.mustFindParentDir(newVolume, newUri)
-          newVolume.copyDir(newFile, <ProdosVolume>oldVolume, <ProdosFileEntry>oldFile)
+          const newFile = <ProdosFileEntry>this.mustFindParentDir(newVasp)
+          newVasp.volume.copyDir(newFile, <ProdosVolume>oldVasp.volume, <ProdosFileEntry>oldFile)
         } else {
-
+          // move file
           const oldContents = oldFile.getContents()
-          const newParentDir = this.mustFindParentDir(newVolume, newUri)
-          const newFile = newVolume.createFile(newParentDir, newName, oldFile.type, oldFile.auxType)
+          const newParentDir = this.mustFindParentDir(newVasp)
+          const newFile = newVasp.volume.createFile(newParentDir, newName, oldFile.type, oldFile.auxType)
           newFile.setContents(oldContents)
           newUri = this.renameUri(newUri, newFile)
         }
 
-        oldVolume.deleteFile(oldParentDir, oldFile, true)
+        oldVasp.volume.deleteFile(oldParentDir, oldFile, true)
       }
+
+      // Always force a change on the new volume to refresh
+      //  truncated names and magic suffixes.
+      //
+      // NOTE: A fake file name is used in order to force
+      //  VSCode to do a full refresh.  If the actual name
+      //  is given, it ignores the notification.
+      const parts = path.parse(newUri.path)
+      const newPath = path.format({ ...parts, base: "FAKE" })
+      newUri = newUri.with({ path: newPath })
 
       // TODO: check for existing file/directory at target
 
-      newVolume.commitChanges()
-      oldVolume.commitChanges()
+      newVasp.volume.commitChanges()
+      oldVasp.volume.commitChanges()
       this.fireSoon(
         { type: vscode.FileChangeType.Deleted, uri: oldUri },
         { type: vscode.FileChangeType.Created, uri: newUri }
       )
     } catch (e: any) {
-      newVolume?.revertChanges()
-      oldVolume?.revertChanges()
+      newVasp?.volume.revertChanges()
+      oldVasp?.volume.revertChanges()
       throw e
     }
   }
@@ -488,26 +518,26 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
   // NOTE: The destination uri always has " copy" appended to the name
   //  even if there's no existing file at the destination.
   public copy(source: vscode.Uri, destination: vscode.Uri, options: { readonly overwrite: boolean }): void | Thenable<void> {
-    let srcVolume: Volume | undefined
-    let dstVolume: Volume | undefined
+    let srcVasp: VolumeAndSubPath | undefined
+    let dstVasp: VolumeAndSubPath | undefined
     try {
-      srcVolume = this.getVolume(source)
-      dstVolume = this.getVolume(destination)
+      srcVasp = this.getVolumeAndSubPath(source)
+      dstVasp = this.getVolumeAndSubPath(destination)
 
-      const srcParentDir = this.mustFindParentDir(srcVolume, source)
-      const srcFile = this.mustFindFileOrDir(srcVolume, srcParentDir, source)
+      const srcParentDir = this.mustFindParentDir(srcVasp)
+      const srcFile = this.mustFindFileOrDir(srcVasp, srcParentDir)
       if (srcFile.type == FileType.DIR) {
-        if (dstVolume instanceof Dos33Volume) {
+        if (dstVasp.volume instanceof Dos33Volume) {
           throw new Error("Not allowed on a Dos 3.3 volume")
         }
-        let dstFile = <ProdosFileEntry>this.mustFindParentDir(dstVolume, destination)
-        dstVolume.copyDir(dstFile, <ProdosVolume>srcVolume, <ProdosFileEntry>srcFile)
+        let dstFile = <ProdosFileEntry>this.mustFindParentDir(dstVasp)
+        dstVasp.volume.copyDir(dstFile, <ProdosVolume>srcVasp.volume, <ProdosFileEntry>srcFile)
       } else {
         const srcContents = srcFile.getContents()
-        const dstParentDir = this.mustFindParentDir(dstVolume, destination)
+        const dstParentDir = this.mustFindParentDir(dstVasp)
 
-        const dstInfo = this.getCleanFileName(dstVolume, destination)
-        let dstFile = this.mayFindFileOrDir(dstVolume, dstParentDir, destination)
+        const dstInfo = this.getCleanFileName(dstVasp)
+        let dstFile = this.mayFindFileOrDir(dstVasp, dstParentDir)
         if (dstFile) {
           if (!options.overwrite) {
             throw vscode.FileSystemError.FileExists(destination)
@@ -515,44 +545,52 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
         } else {
           let fileType = srcFile.type
           let auxType = srcFile.auxType
-          if (srcVolume instanceof Dos33Volume) {
-            if (dstVolume instanceof ProdosVolume) {
+          if (srcVasp.volume instanceof Dos33Volume) {
+            if (dstVasp.volume instanceof ProdosVolume) {
               if (srcFile.type == FileType.BAS) {
                 auxType = 0x0801
               }
             }
-          } else if (dstVolume instanceof Dos33Volume) {
+          } else if (dstVasp.volume instanceof Dos33Volume) {
             // TODO: convert from ProDOS -> DOS 3.3 type?
           }
-          dstFile = dstVolume.createFile(dstParentDir, dstInfo.name, fileType, auxType)
+          dstFile = dstVasp.volume.createFile(dstParentDir, dstInfo.name, fileType, auxType)
         }
         dstFile.setContents(srcContents)
         destination = this.renameUri(destination, dstFile)
       }
 
-      dstVolume.commitChanges()
+      dstVasp.volume.commitChanges()
       this.fireSoon(
         { type: vscode.FileChangeType.Created, uri: destination }
       )
     } catch (e: any) {
-      srcVolume?.revertChanges()
-      dstVolume?.revertChanges()
+      srcVasp?.volume.revertChanges()
+      dstVasp?.volume.revertChanges()
       throw e
     }
   }
 
-  private getVolume(uri: vscode.Uri): ProdosVolume | Dos33Volume {
-    const volumeUri = vscode.Uri.parse(uri.query)
-    const volume = this.volumes.get(volumeUri.path)
-    if (!volume) {
-      throw vscode.FileSystemError.FileNotFound(volumeUri)
+  private findVolume(uri: vscode.Uri): VolumeEntry | undefined {
+    for (let volumeEntry of this.volumeEntries) {
+      if (uri.path.startsWith(volumeEntry.uri.path)) {
+        return volumeEntry
+      }
     }
-    volume.revertChanges()
-    return volume
   }
 
-  private getDirName(uri: vscode.Uri): string {
-    let dirPath = uri.path.slice(1)  // trim leading '/'
+  private getVolumeAndSubPath(uri: vscode.Uri): VolumeAndSubPath {
+    const volumeEntry = this.findVolume(uri)
+    if (!volumeEntry) {
+      throw vscode.FileSystemError.FileNotFound(uri)
+    }
+    volumeEntry.volume.revertChanges()
+    const subPath = uri.path.substring(volumeEntry.uri.path.length)
+    return { volume: volumeEntry.volume, subPath, uri }
+  }
+
+  private getDirName(subPath: string): string {
+    let dirPath = subPath.slice(1)  // trim leading '/'
     let dirName = path.posix.dirname(dirPath)
     if (dirName == ".") {
       dirName = ""
@@ -561,56 +599,56 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
   }
 
   // find full directory path, not just parent dirname
-  private mustFindDir(volume: Volume, uri: vscode.Uri): FileEntry {
-    let dirPath = uri.path.slice(1)  // trim leading '/'
+  private mustFindDir(vasp: VolumeAndSubPath): FileEntry {
+    let dirPath = vasp.subPath.slice(1)  // trim leading '/'
     if (dirPath == ".") {
       dirPath = ""
     }
-    const file = volume.findFileEntry(dirPath)
+    const file = vasp.volume.findFileEntry(dirPath)
     if (!file) {
-      throw vscode.FileSystemError.FileNotFound(uri)
+      throw vscode.FileSystemError.FileNotFound(vasp.uri)
     }
     if (file.type != FileType.DIR) {
-      throw vscode.FileSystemError.FileNotADirectory(uri)
+      throw vscode.FileSystemError.FileNotADirectory(vasp.uri)
     }
     return file
   }
 
-  private mustFindFile(volume: Volume, uri: vscode.Uri): FileEntry {
-    const parentDir = this.mustFindParentDir(volume, uri)
-    const file = this.mustFindFileOrDir(volume, parentDir, uri)
+  private mustFindFile(vasp: VolumeAndSubPath): FileEntry {
+    const parentDir = this.mustFindParentDir(vasp)
+    const file = this.mustFindFileOrDir(vasp, parentDir)
     if (file.type == FileType.DIR) {
-      throw vscode.FileSystemError.FileIsADirectory(uri)
+      throw vscode.FileSystemError.FileIsADirectory(vasp.uri)
     }
     return file
   }
 
-  private mustFindParentDir(volume: Volume, uri: vscode.Uri): FileEntry {
-    const dirName = this.getDirName(uri)
-    const file = volume.findFileEntry(dirName)
+  private mustFindParentDir(vasp: VolumeAndSubPath): FileEntry {
+    const dirName = this.getDirName(vasp.subPath)
+    const file = vasp.volume.findFileEntry(dirName)
     if (!file) {
-      throw vscode.FileSystemError.FileNotFound(uri)
+      throw vscode.FileSystemError.FileNotFound(vasp.uri)
     }
     if (file.type != FileType.DIR) {
-      throw vscode.FileSystemError.FileNotADirectory(uri)
+      throw vscode.FileSystemError.FileNotADirectory(vasp.uri)
     }
     return file
   }
 
-  private mustFindFileOrDir(volume: Volume, parent: FileEntry, uri: vscode.Uri): FileEntry {
-    const file = this.mayFindFileOrDir(volume, parent, uri)
+  private mustFindFileOrDir(vasp: VolumeAndSubPath, parent: FileEntry): FileEntry {
+    const file = this.mayFindFileOrDir(vasp, parent)
     if (!file) {
-      throw vscode.FileSystemError.FileNotFound(uri)
+      throw vscode.FileSystemError.FileNotFound(vasp.uri)
     }
     return file
   }
 
-  private mayFindFileOrDir(volume: Volume, parent: FileEntry, uri: vscode.Uri): FileEntry | undefined {
+  private mayFindFileOrDir(vasp: VolumeAndSubPath, parent: FileEntry): FileEntry | undefined {
 
-    const fileInfo = this.getCleanFileName(volume, uri)
+    const fileInfo = this.getCleanFileName(vasp)
 
     let file: FileEntry | undefined
-    volume.forEachAllocatedFile(parent, (fileEntry: FileEntry) => {
+    vasp.volume.forEachAllocatedFile(parent, (fileEntry: FileEntry) => {
       if (fileEntry.name != fileInfo.name) {
         return true
       }
@@ -696,8 +734,8 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     return name
   }
 
-  private getCleanFileName(volume: Volume, uri: vscode.Uri): FileInfo {
-    let base = path.posix.basename(uri.path)
+  private getCleanFileName(vasp: VolumeAndSubPath, parentDirName?: string): FileInfo {
+    let base = path.posix.basename(vasp.subPath)
     let suffix = ""
     let typeStr: string | undefined
     let auxStr: string | undefined
@@ -730,10 +768,13 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       }
     }
 
-    n = base.lastIndexOf(".")
-    if (n >= 0) {
-      suffix = base.substring(n)    // including "."
-      base = base.substring(0, n)
+    let lengthLimit
+    if (vasp.volume instanceof Dos33Volume) {
+      base = base.toUpperCase()
+      suffix = suffix.toUpperCase()
+      lengthLimit = 30
+    } else {
+      lengthLimit = 15
     }
 
     // put the copy suffix back in at correct location
@@ -742,14 +783,31 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
       base += " COPY"
     }
 
-    let lengthLimit
-    if (volume instanceof Dos33Volume) {
-      base = base.toUpperCase()
-      suffix = suffix.toUpperCase()
-      lengthLimit = 30
-    } else {
-      lengthLimit = 15
-    }
+    // strip parent directory name from start of filename
+
+    // TODO: there are problems with VSCode reporting bogus
+    //  errors when the file name is changed like this.
+
+    // if (parentDirName) {
+    //   const lastSlash = parentDirName.lastIndexOf("/")
+    //   if (lastSlash >= 0) {
+    //     parentDirName = parentDirName.substring(lastSlash + 1)
+    //   }
+    //   if (base.startsWith(parentDirName)) {
+    //     if (parentDirName.length + 2 < base.length) {
+    //       base = base.substring(parentDirName.length)
+    //       base = base.trimStart()
+    //     }
+    //   }
+    //
+    //   // on ProDos, strip .PIC suffix from actual file name
+    //   // (only if parentDirName provided, meaning it's a rename)
+    //   // if (base.endsWith(".PIC")) {
+    //   //   if (typeStr == "PIC") {
+    //   //     base = base.substring(0, base.length - 4)
+    //   //   }
+    //   // }
+    // }
 
     // truncate and append "~"
     if (base.length > lengthLimit - suffix.length) {
@@ -809,3 +867,5 @@ export class Apple2FileSystem implements vscode.FileSystemProvider {
     return { name: base + suffix, type: fileType, auxType }
   }
 }
+
+//------------------------------------------------------------------------------

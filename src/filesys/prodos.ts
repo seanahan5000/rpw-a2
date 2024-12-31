@@ -739,7 +739,7 @@ export class ProdosVolume {
     })
   }
 
-  public moveFile(file: FileEntry, dstDir: FileEntry): void {
+  public moveFile(file: FileEntry, dstDir: FileEntry): FileEntry {
     const srcFile = <ProdosFileEntry>file
 
     if (dstDir.type != FileType.DIR) {
@@ -773,6 +773,8 @@ export class ProdosVolume {
 
     // clear file entry in its source location
     srcFile.markDeleted()
+
+    return dstFile
   }
 
   // NOTE: does not throw error on file not found
