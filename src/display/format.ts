@@ -336,6 +336,25 @@ export abstract class Bitmap {
     return mask
   }
 
+  public padMask(): Bitmap {
+    const outRect: Rect = {
+      x: 0, y: 0, width: this.size.width + 2, height: this.size.height + 2
+    }
+    const outMask = this.format.createBitmap(outRect)
+    outMask.drawBitmap(this, {x: 0, y: 0}, this)
+    outMask.drawBitmap(this, {x: 1, y: 0}, this)
+    outMask.drawBitmap(this, {x: 2, y: 0}, this)
+    outMask.drawBitmap(this, {x: 0, y: 1}, this)
+    outMask.drawBitmap(this, {x: 1, y: 1}, this)
+    outMask.drawBitmap(this, {x: 2, y: 1}, this)
+    outMask.drawBitmap(this, {x: 0, y: 2}, this)
+    outMask.drawBitmap(this, {x: 1, y: 2}, this)
+    outMask.drawBitmap(this, {x: 2, y: 2}, this)
+    outMask.x = this.x - 1
+    outMask.y = this.y - 1
+    return outMask
+  }
+
   public reverseMask() {
     let offset = 0
     for (let y = 0; y < this.height; y += 1) {
@@ -449,7 +468,7 @@ export abstract class Bitmap {
     return foreMatch
   }
 
-  public flipColor(foreColor: number) {
+  public xorColor(foreColor: number) {
     const pattern = this.format.getColorPattern(foreColor)
     const patHeight = pattern.length
     const patWidth = pattern[0].length

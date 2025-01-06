@@ -4,7 +4,7 @@ import { DisplayFormat } from "./display/format"
 
 // dbug-only
 // import { packNaja2 } from "./pack"
-// import { unpackNaja1, unpackNaja2, textFromNaja } from "./unpack"
+// import { unpackNaja1, unpackNaja2, textFromNaja, buildNajaMask } from "./unpack"
 // import { SourceDocBuilder } from "./source_builder"
 
 //------------------------------------------------------------------------------
@@ -215,13 +215,12 @@ export function imageFromText(clipText: string, screenFormat: DisplayFormat): { 
   // if (formatName == "hires") {
   //   if (!hasMask) {
   //     let najaImage = unpackNaja1(rawData)
-  //     if (najaImage) {
-  //       return { pixelData: najaImage }
+  //     if (!najaImage) {
+  //       najaImage = unpackNaja2(rawData)
   //     }
-  //
-  //     najaImage = unpackNaja2(rawData)
   //     if (najaImage) {
-  //       return { pixelData: najaImage }
+  //       const maskImage = buildNajaMask(najaImage)
+  //       return { pixelData: najaImage, maskData: maskImage }
   //     }
   //   }
   // }

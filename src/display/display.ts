@@ -1,4 +1,7 @@
 
+//  * undo tracking wrong in RPW A2
+//    - undo back to saved version out of sync
+
 // Features
 //  - multiple brushes
 //  - multiple line thicknesses
@@ -9,13 +12,11 @@
 //    - insertion point/selection
 //    - cut/copy/paste
 //    - multiple fonts, scaling
-//    - auto-scroll in zoom
+//    * auto-scroll in zoom
 //  - polygons, curves, etc.
 //  - smart copy/paste
 //    - to/from .png, w/dithering
 //    - convert hires <-> dhires
-//  - double-click with lasso to select object
-//    - based on select all
 
 // Maybe
 //  ? flash text insertion point
@@ -25,8 +26,7 @@
 //    ? stop using border box for selected tool
 //    ? hover hilite
 //  ? "detents" at byte boundaries on contrained selection drag
-//  ? bytewise transparency for Game
-//  ? right click and drag for grab
+//  ? limit selection pad to bounds of screen
 
 // Generalizing
 //  - display mode decoupled from paint display
@@ -951,11 +951,6 @@ export class PaintDisplay extends ZoomDisplay {
     }
   }
 
-  toggleColor() {
-    this.frame.flipColor(this.foreColor)
-    this.updateToMemory()
-  }
-
   setTool(tool: Tool, modifiers: number = 0, doubleClick = false) {
 
     if (tool != this.tool) {
@@ -1169,6 +1164,10 @@ export class PaintDisplay extends ZoomDisplay {
       }
     }
 
+    if (this.mouseMode == MouseMode.Grab) {
+      return Cursor.Hand
+    }
+
     if (this.tool != Tool.None) {
 
       if (this.tool == Tool.Select || this.tool == Tool.Lasso) {
@@ -1196,8 +1195,7 @@ export class PaintDisplay extends ZoomDisplay {
           return Cursor.Move
         }
       } else {
-        if ((this.mouseMode == MouseMode.Grab) ||
-            (this.mouseMode == MouseMode.None && (modifiers & ModifierKeys.CONTROL))) {
+        if (this.mouseMode == MouseMode.None && (modifiers & ModifierKeys.CONTROL)) {
           return Cursor.Hand
         }
       }
@@ -1218,6 +1216,23 @@ export class PaintDisplay extends ZoomDisplay {
     }
 
     return Cursor.None
+  }
+
+  toolRightDown(canvasPt: Point, modifiers: number) {
+    this.mouseMode = MouseMode.Grab
+    this.updateHand(true, modifiers, canvasPt)
+  }
+
+  toolRightMove(canvasPt: Point, modifiers: number) {
+    if (this.mouseMode == MouseMode.Grab) {
+      this.updateHand(false, modifiers, canvasPt)
+    }
+  }
+
+  toolRightUp(canvasPt: Point, modifiers: number) {
+    if (this.mouseMode == MouseMode.Grab) {
+      this.mouseMode = MouseMode.None
+    }
   }
 
   toolDown(canvasPt: Point, modifiers: number) {
@@ -1487,7 +1502,7 @@ export class PaintDisplay extends ZoomDisplay {
     if (modifiers & ModifierKeys.SHIFT) {
       this.constrainSize()
     }
-    this.frameCurrPt = this.frameFromDisplayRoundNoClip(this.displayCurrPt)
+    this.frameCurrPt = this.frameFromDisplayFloorNoClip(this.displayCurrPt)
     if (firstUpdate) {
       this.captureUndo()
       this.frameStartPt = this.frameCurrPt
@@ -1999,8 +2014,8 @@ export class PaintDisplay extends ZoomDisplay {
     } else {
       rect.x = Math.floor(rect.x)
       rect.y = Math.floor(rect.y)
-      rect.width = Math.round(rect.width) - rect.x
-      rect.height = Math.round(rect.height) - rect.y
+      rect.width = Math.floor(rect.width) + 1 - rect.x
+      rect.height = Math.floor(rect.height) + 1 - rect.y
     }
 
     if (!isSelection) {
@@ -2115,6 +2130,30 @@ export class PaintDisplay extends ZoomDisplay {
         }
         this.moveSelection()
         this.updateCanvas()
+      }
+    }
+  }
+
+  xorSelection() {
+    if (this.tool == Tool.Select || this.tool == Tool.Lasso) {
+      const modifiers = 0
+      this.liftSelection(modifiers)
+      this.selectBits!.xorColor(this.foreColor)
+      this.moveSelection()
+      this.updateCanvas()
+    }
+  }
+
+  padSelection() {
+    // TODO: also support pad for Tool.Select?
+    if (this.tool == Tool.Lasso) {
+      if (!this.selectBits) {
+        if (this.selectMask) {
+          this.captureUndo()
+          this.selectMask = this.selectMask.padMask()
+          this.toolRect = this.selectMask.bounds
+          this.updateCanvas()
+        }
       }
     }
   }
@@ -2277,7 +2316,7 @@ export class PaintDisplay extends ZoomDisplay {
     // TODO: there are problems with pasting into screen
     //  when display resized to larger than screen
 
-    this.setTool(Tool.Select)
+    this.setTool(mask ? Tool.Lasso : Tool.Select)
     this.selectBits = bitmap
     this.selectMask = mask
     this.selectBack = this.frame.duplicate()

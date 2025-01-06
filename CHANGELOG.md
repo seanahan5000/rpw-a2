@@ -1,5 +1,15 @@
 # RPW A2 Changelog
 
+### [2.0.2] - 2025-01-06
+
+#### Added:
+* XOR/invert of current selection (shift-x)
+
+#### Fixed:
+* Arrow keys scrolling window and selection
+* Lasso mask lost on copy then paste
+* Rectangle tool coordinate rounding
+
 ### [2.0.1] - 2024-12-30
 
 Rework URI handling in order to fix VSCode EXPLORER view drawing weirdness.

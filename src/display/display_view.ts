@@ -3,7 +3,7 @@ import { Point, Rect } from "../shared"
 import { IMachineDisplay, Joystick } from "../shared"
 import { IHostHooks } from "../shared"
 import { Tool, Cursor, ToolIconNames, ToolCursorNames, ToolCursorOrigins } from "./tools"
-import { ToolHelp, ColorHelp, ColorHelpHires } from "./tools"
+import { ToolHelp, ColorHelp } from "./tools"
 import { PaintDisplay, getModifierKeys } from "./display"
 
 // TODO: fixme
@@ -729,9 +729,6 @@ export class DisplayView {
 
       const colorHelp = document.createElement("div")
       colorHelp.innerHTML = ColorHelp
-      if (this.paintDisplay.format.name.startsWith("hires")) {
-        colorHelp.innerHTML += ColorHelpHires
-      }
       colorHelp.classList.add("color-help")
       colorButton.appendChild(colorHelp)
 
@@ -940,6 +937,9 @@ export class DisplayView {
       }
       if (direction >= 0) {
         this.paintDisplay.toolArrow(direction, getModifierKeys(e))
+        // stop arrows from scrolling window
+        e.preventDefault()
+        e.stopPropagation()
         return
       }
 
@@ -958,6 +958,10 @@ export class DisplayView {
       } else if (curKey == "v") {
         if (e.shiftKey) {
           this.paintDisplay.flipSelection(false, true)
+        }
+      } else if (curKey == "p") {
+        if (e.shiftKey) {
+          this.paintDisplay.padSelection()
         }
       }
 
@@ -1036,7 +1040,9 @@ export class DisplayView {
       } else if (curKey == "g") {
         this.paintDisplay.toggleGrid()
       } else if (curKey == "x") {
-        this.paintDisplay.toggleColor()
+        if (e.shiftKey) {
+          this.paintDisplay.xorSelection()
+        }
       } else if (curKey == "!") {
         this.paintDisplay.optimize()
       } else if (curKey == "+") {
@@ -1118,10 +1124,16 @@ export class DisplayView {
           this.paintDisplay.toolDown(this.mousePt, getModifierKeys(e))
         }
       } else if (e.which == 3) {
+        this.paintCanvas.setPointerCapture(e.pointerId)
         this.rightButtonIsDown = true
         this.joystick.button1 = true
+        // if (this.isEditing) {
+        //   this.paintDisplay.toolRightDown(this.mousePt, getModifierKeys(e))
+        // }
       }
-      if (!this.isEditing) {
+      if (this.isEditing) {
+        this.updateCursor(getModifierKeys(e))
+      } else {
         this.updateJoystick()
       }
     }
@@ -1139,6 +1151,8 @@ export class DisplayView {
         this.updateCoordinateInfo(this.mousePt)
         if (this.leftButtonIsDown) {
           this.paintDisplay.toolMove(this.mousePt, getModifierKeys(e))
+        // } else if (this.rightButtonIsDown) {
+        //   this.paintDisplay.toolRightMove(this.mousePt, getModifierKeys(e))
         }
       } else {
         if (this.hasFocus) {
@@ -1161,10 +1175,16 @@ export class DisplayView {
           this.paintDisplay.toolUp(this.mousePt, getModifierKeys(e))
         }
       } else if (e.which == 3) {
+        this.paintCanvas.releasePointerCapture(e.pointerId)
         this.rightButtonIsDown = false
         this.joystick.button1 = false
+        // if (this.isEditing) {
+        //   this.paintDisplay.toolRightUp(this.mousePt, getModifierKeys(e))
+        // }
       }
-      if (!this.isEditing && this.hasFocus) {
+      if (this.isEditing) {
+        this.updateCursor(getModifierKeys(e))
+      } else if (this.hasFocus) {
         this.updateJoystick()
       }
     }
