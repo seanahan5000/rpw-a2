@@ -132,7 +132,11 @@ export const ToolHelp: string[] = [
   Delete key to delete<br>
   Shift-h to flip horizontal<br>
   Shift-v to flip vertical<br>
-  Shift-t to toggle transparency<br>`,
+  Shift-t to toggle transparency<br>
+  Shift-x to XOR with foreground color<br>
+  <br>
+  <b>At any time:</b><br>
+  Use x to XOR screen with foreground color<br>`,
 
   // lasso help
   `<b><u>Lasso Select Tool</u></b> (l)<br>
@@ -141,7 +145,9 @@ export const ToolHelp: string[] = [
   <br>
   Double-click to select all<br>
   <br>
-  (See Select Tool for moving and modifying)<br>`,
+  <b>Modifying a Selection:</b><br>
+  Shift-p to pad outward<br>
+  (See Select Tool for other moving and modifying)<br>`,
 
   // text help
   `<b><u>Text Tool</u></b> (t)<br>
@@ -160,7 +166,7 @@ export const ToolHelp: string[] = [
   <br>
   <b>At any time:</b><br>
   Use command key and mouse wheel<br>
-  or 1,2,3,4 keys to zoom in/out<br>
+  or 1,2,3,4,5,6,7,8 keys to zoom in/out<br>
   at current mouse position`,
 
   // eraser help
@@ -237,11 +243,4 @@ export const ColorHelp: string = `
   <b>At any time:</b><br>
   Use left/right arrows to change foreground color<br>
   Use with option key to change background color<br>
-`
-
-export const ColorHelpHires: string = `
-  <br>
-  Use x key to xor screen with foreground color<br>
-  (Useful to distinguish HIRES black and white<br>
-  with and without high bit set.)
 `

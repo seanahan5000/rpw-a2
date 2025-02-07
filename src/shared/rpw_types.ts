@@ -48,7 +48,7 @@ export type RpwPreload = {
 
 export type RpwProject = {
   settings?: RpwSettings        // default: RpwSettings defaults
-  projectName: string           // default: <name>.rpw-project
+  projectName?: string          // default: <name>.rpw-project
   srcDir?: string
   binDir?: string
   includes?: string[]

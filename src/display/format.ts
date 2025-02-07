@@ -1,5 +1,5 @@
 
-import { Point, Size, Rect, PixelData } from "../shared"
+import { Point, Size, Rect, PixelData } from "../shared/types"
 
 //------------------------------------------------------------------------------
 

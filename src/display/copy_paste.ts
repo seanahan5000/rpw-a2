@@ -1,10 +1,9 @@
 
-import { PixelData } from "./shared"
-import { DisplayFormat } from "./display/format"
+import { PixelData } from "../shared/types"
+import { DisplayFormat } from "./format"
 
-// dbug-only
-// import { packNaja2 } from "./pack"
-// import { unpackNaja1, unpackNaja2, textFromNaja, buildNajaMask } from "./unpack"
+import { packNaja2 } from "./pack"
+import { unpackNaja1, unpackNaja2, textFromNaja, buildNajaMask } from "./unpack"
 // import { SourceDocBuilder } from "./source_builder"
 
 //------------------------------------------------------------------------------
@@ -23,13 +22,13 @@ type Header = {
 
 export function textFromPixels(pixelData: PixelData, maskData?: PixelData, compress: boolean = false): string {
 
-  // if (compress) {
-  //   if (pixelData.format == "hires") {
-  //     // NOTE: assumes mask has already been applied to pixels
-  //     const byteData = packNaja2(pixelData)
-  //     return textFromNaja(byteData)
-  //   }
-  // }
+  if (compress) {
+    if (pixelData.format == "hires") {
+      // NOTE: assumes mask has already been applied to pixels
+      const byteData = packNaja2(pixelData)
+      return textFromNaja(byteData)
+    }
+  }
 
   let text = ""
   let indent = "                "
@@ -212,18 +211,18 @@ export function imageFromText(clipText: string, screenFormat: DisplayFormat): { 
   const hasMask = header?.mask ?? false
   const formatName = header?.format ?? screenFormat.name
 
-  // if (formatName == "hires") {
-  //   if (!hasMask) {
-  //     let najaImage = unpackNaja1(rawData)
-  //     if (!najaImage) {
-  //       najaImage = unpackNaja2(rawData)
-  //     }
-  //     if (najaImage) {
-  //       const maskImage = buildNajaMask(najaImage)
-  //       return { pixelData: najaImage, maskData: maskImage }
-  //     }
-  //   }
-  // }
+  if (formatName == "hires") {
+    if (!hasMask) {
+      let najaImage = unpackNaja1(rawData)
+      if (!najaImage) {
+        najaImage = unpackNaja2(rawData)
+      }
+      if (najaImage) {
+        const maskImage = buildNajaMask(najaImage)
+        return { pixelData: najaImage, maskData: maskImage }
+      }
+    }
+  }
 
   if (widthGuess == 0) {
     widthGuess = screenFormat.calcPixelWidth(rawData.length)

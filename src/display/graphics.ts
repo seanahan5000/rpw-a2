@@ -1,5 +1,5 @@
 
-import { Point, Rect } from "../shared"
+import { Point, Rect } from "../shared/types"
 import { Bitmap } from "./format"
 
 //------------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 
-import { Point, Size, Rect, PixelData } from "../shared"
+import { Point, Size, Rect, PixelData } from "../shared/types"
 import { DisplayFormat, Bitmap } from "./format"
 import { deinterleave40, deinterleave80 } from "./text"
 

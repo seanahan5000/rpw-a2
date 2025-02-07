@@ -1,7 +1,7 @@
 
 import { DisplayView } from "../display/display_view"
 import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
-import { IMachineDisplay, IHostHooks, PixelData } from "../shared"
+import { IMachineDisplay, IHostHooks, PixelData } from "../shared/types"
 import { HiresInterleave, TextLoresInterleave } from "../display/tables"
 import { deinterleave40, deinterleave80 } from "../display/text"
 

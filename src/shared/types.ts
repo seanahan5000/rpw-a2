@@ -75,6 +75,14 @@ export interface IMachineMemory {
   write(address: number, value: number): void
 }
 
+export type StackEntry = {
+  proc: number
+  pc: number
+  sp: number
+  regs: number[]
+  status: number
+}
+
 //------------------------------------------------------------------------------
 
 // NOTE: named just "Bus" so it works with MOS6502.ts code

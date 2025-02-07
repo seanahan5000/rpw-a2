@@ -1,5 +1,14 @@
 # RPW A2 Changelog
 
+### [2.0.3] - 2025-02-07
+
+#### Added:
+* XOR/invert of entire screen, without selection (x)
+* More zoom levels
+
+#### Fixed:
+* Select all selecting html elements along with pixels
+
 ### [2.0.2] - 2025-01-06
 
 #### Added:

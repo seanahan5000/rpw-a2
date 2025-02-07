@@ -4,7 +4,7 @@
 	"description": "Apple II graphics editor (Single/Double HIRES/LORES) with ProDOS and DOS 3.3 file system providers",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "2.0.2",
+	"version": "2.0.3",
 	"license": "MIT",
 	"repository": {
 		"type": "git",

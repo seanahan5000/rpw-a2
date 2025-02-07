@@ -12,7 +12,7 @@
 //    - insertion point/selection
 //    - cut/copy/paste
 //    - multiple fonts, scaling
-//    * auto-scroll in zoom
+//    - auto-scroll in zoom
 //  - polygons, curves, etc.
 //  - smart copy/paste
 //    - to/from .png, w/dithering
@@ -42,13 +42,13 @@
 //    ? mask editing for Game monsters
 //    ? show background layer/image for tracing purposes
 
-import { IHostHooks } from "../shared"
-import { Point, Size, Rect, pointInRect, rectIsEmpty, PixelData } from "../shared"
-import { IMachineDisplay } from "../shared"
+import { IHostHooks } from "../shared/types"
+import { Point, Size, Rect, pointInRect, rectIsEmpty, PixelData } from "../shared/types"
+import { IMachineDisplay } from "../shared/types"
 import { DisplayFormat, Bitmap } from "./format"
 import { Tool, Cursor, ToolCursors } from "./tools"
 import { Polygon, FloodFill, drawMaskEdges, drawEllipse } from "./graphics"
-import { textFromPixels, imageFromText } from "../copy_paste"
+import { textFromPixels, imageFromText } from "./copy_paste"
 
 import { Text40Format, Text80Format, Font } from "./text"
 import { LoresFormat, DoubleLoresFormat } from "./lores"
@@ -248,7 +248,7 @@ class ZoomDisplay extends ScreenDisplay {
   protected overlayPosition = 3
 
   protected zoomLevel = 0
-  public readonly zoomMaxLevel = 3    // inclusive
+  public readonly zoomMaxLevel = 7    // inclusive
   protected zoomScale = 1
   protected totalScale: Point         // zoomScale * aspectScale
 
@@ -422,7 +422,7 @@ class ZoomDisplay extends ScreenDisplay {
 
     let oldZoomScale = this.zoomScale
     this.zoomLevel = newZoomLevel
-    this.zoomScale = 1 << Math.min(newZoomLevel, this.zoomMaxLevel)
+    this.zoomScale = Math.min(newZoomLevel, this.zoomMaxLevel) * 2 + 1
     this.totalScale.x = this.pixelScale.x * this.zoomScale
     this.totalScale.y = this.pixelScale.y * this.zoomScale
 
@@ -1733,7 +1733,7 @@ export class PaintDisplay extends ZoomDisplay {
         this.captureUndo()
 
         this.editText = ""
-        this.editFont = Font.create("appleiie")
+        this.editFont = Font.create((modifiers & ModifierKeys.SHIFT) ? "naja" : "appleiie")
         const charRect = {
           x: this.frameStartPt.x,
           y: this.frameStartPt.y - this.editFont.charSize.height,
@@ -2142,6 +2142,12 @@ export class PaintDisplay extends ZoomDisplay {
       this.moveSelection()
       this.updateCanvas()
     }
+  }
+
+  xorFrame() {
+    this.captureUndo()
+    this.frame.xorColor(this.foreColor)
+    this.updateToMemory()
   }
 
   padSelection() {

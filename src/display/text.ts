@@ -1,5 +1,5 @@
 
-import { Point, Size, Rect, PixelData } from "../shared"
+import { Point, Size, Rect, PixelData } from "../shared/types"
 import { DisplayFormat, Bitmap } from "./format"
 import { TextLoresInterleave, HGR_BLACK_RGB, HGR_WHITE_RGB } from "./tables"
 
@@ -231,8 +231,11 @@ export class Text80Format extends Text40Format {
 
 export abstract class Font {
   public static create(name: string): Font {
-    return new AppleIIeFont()
-    // return new NajaFont()
+    if (name == "naja") {
+      return new NajaFont()
+    } else {
+      return new AppleIIeFont()
+    }
   }
 
   public abstract get charSize(): Size

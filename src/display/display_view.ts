@@ -1,7 +1,7 @@
 
-import { Point, Rect } from "../shared"
-import { IMachineDisplay, Joystick } from "../shared"
-import { IHostHooks } from "../shared"
+import { Point, Rect } from "../shared/types"
+import { IMachineDisplay, Joystick } from "../shared/types"
+import { IHostHooks } from "../shared/types"
 import { Tool, Cursor, ToolIconNames, ToolCursorNames, ToolCursorOrigins } from "./tools"
 import { ToolHelp, ColorHelp } from "./tools"
 import { PaintDisplay, getModifierKeys } from "./display"
@@ -675,7 +675,7 @@ export class DisplayView {
 
       toolButton.onmousedown = (e: MouseEvent) => {
         e.preventDefault()
-        this.setTool(i)
+        this.setTool(i, getModifierKeys(e))
         this.paintCanvas.focus()
       }
 
@@ -912,6 +912,7 @@ export class DisplayView {
           // NOTE: do this even if hostHooks is present
           this.paintDisplay.selectAll(e.ctrlKey)
           e.preventDefault()
+          e.stopPropagation()
         } else if (curKey === "z") {
           if (!this.hostHooks) {
             if (e.shiftKey) {
@@ -966,6 +967,10 @@ export class DisplayView {
       }
 
       if (curKey === "c") {
+        if (e.shiftKey) {
+          this.paintDisplay.copySelection(getModifierKeys(e))
+          return
+        }
         if (this.lastKey == "") {
           this.lastKey = curKey
           return
@@ -984,8 +989,8 @@ export class DisplayView {
       }
 
       let n = parseInt(curKey)
-      if (n >= 0 && n <= 9) {
-        // map 1,2,3,4 into levels 0,1,2,3
+      if (n >= 1 && n <= 8) {
+        // map 1,..,8 into levels 0,..,7
         n = Math.min(Math.max(n - 1, 0), this.paintDisplay.zoomMaxLevel)
         this.paintDisplay.setZoomLevel(n, this.mousePt)
         this.lastKey = ""
@@ -1042,6 +1047,8 @@ export class DisplayView {
       } else if (curKey == "x") {
         if (e.shiftKey) {
           this.paintDisplay.xorSelection()
+        } else {
+          this.paintDisplay.xorFrame()
         }
       } else if (curKey == "!") {
         this.paintDisplay.optimize()
