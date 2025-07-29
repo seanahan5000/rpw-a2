@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import * as base64 from 'base64-js'
 
 //------------------------------------------------------------------------------
 
@@ -430,7 +431,7 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
       enableScripts: true
     }
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview)
-    webviewPanel.webview.onDidReceiveMessage(e => this.onMessage(document, e))
+    webviewPanel.webview.onDidReceiveMessage(e => this.onMessage(document, e))    // *** why this?
     webviewPanel.webview.onDidReceiveMessage(e => {
       if (e.type === 'ready') {
         if (document.uri.scheme === 'untitled') {
@@ -482,6 +483,9 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
     const styleMainUri = webview.asWebviewUri(vscode.Uri.joinPath(
       this._context.extensionUri, 'out', 'display_view.css'));
 
+    const styleAppleUri = webview.asWebviewUri(vscode.Uri.joinPath(
+      this._context.extensionUri, 'out', 'apple_view.css'));
+
     // Use a nonce to whitelist which scripts can be run
     const nonce = getNonce();
 
@@ -502,6 +506,7 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
       <body>
 
         <link href="${styleMainUri}" rel="stylesheet" />
+        <link href="${styleAppleUri}" rel="stylesheet" />
         <div id="top-div"></div>
 
         <script nonce="${nonce}" src="${scriptUri}"></script>
@@ -538,6 +543,139 @@ export class HiresEditorProvider implements vscode.CustomEditorProvider<HiresDoc
         break
       }
     }
+  }
+}
+
+//------------------------------------------------------------------------------
+
+export class EmulatorPanel {
+
+  public static instance?: EmulatorPanel
+  private static saveState?: any
+
+  private readonly panel: vscode.WebviewPanel
+  private readonly extensionUri: vscode.Uri
+
+  public static createOrShow(extensionUri: vscode.Uri, machine: string, stopOnEntry: boolean) {
+    // TODO: handle machine type changing
+    if (EmulatorPanel.instance) {
+      EmulatorPanel.instance.panel.reveal()
+      if (stopOnEntry) {
+        // TODO: stop emulator?
+      } else {
+        // TODO: start emulator?
+      }
+    } else {
+      const panel = vscode.window.createWebviewPanel(
+        "rpwa2.EMU",
+        // TODO: more later
+        machine == "iip" ? "Apple ][+" : "Apple IIe",
+        vscode.ViewColumn.Beside,
+        {
+          enableScripts: true,
+          retainContextWhenHidden: true,
+          // TODO: is this useful?
+		      localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'out')]
+        }
+      )
+      // TODO: look at saveState to get machine type?
+      EmulatorPanel.instance = new EmulatorPanel(panel, extensionUri, machine, stopOnEntry)
+    }
+  }
+
+  constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, machine: string, stopOnEntry: boolean) {
+    this.panel = panel
+    this.extensionUri = extensionUri
+
+    this.panel.webview.html = this.getHtmlForWebview(this.panel.webview)
+
+    this.panel.onDidDispose(() => {
+      EmulatorPanel.instance = undefined
+    })
+
+    this.panel.onDidChangeViewState(e => {
+      this.panel.webview.postMessage({ type: "saveState" })
+    })
+
+    this.panel.webview.onDidReceiveMessage(e => {
+      if (e.type === "ready") {
+        this.panel.webview.postMessage({ type: "ping" })
+      } else if (e.type == "ping") {
+        if (e.delay < 20) {
+          this.panel.webview.postMessage({ type: "init", body: {
+            type: "emu",
+            machine: machine,
+            debugPort: 6502,
+            stopOnEntry,
+            saveState: EmulatorPanel.saveState
+          }})
+        } else {
+          // force rebuild of web panel to get rid of throttling
+          this.panel.webview.html = this.getHtmlForWebview(this.panel.webview)
+        }
+      } else if (e.type == "driveClick") {
+        this.onDriveClick(e.driveIndex ?? 0)
+      } else if (e.type == "snapshot") {
+        // *** capture screen and edit? ***
+      }
+    })
+  }
+
+  private async onDriveClick(driveIndex: number) {
+    const uri = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: 'Open Disk',
+      filters: {
+        'Text files': ["dsk", "do", "po", "nib", "2mg"],
+        'All files': ['*']
+      }
+    })
+    if (uri && uri[0]) {
+      const dataBytes = await vscode.workspace.fs.readFile(uri[0])
+      this.panel.webview.postMessage({ type: "setDiskImage", body: {
+        fullPath: uri[0].fsPath,
+        dataString: base64.fromByteArray(dataBytes),
+        driveIndex,
+        writeProtected: false
+      }})
+    }
+  }
+
+  private getHtmlForWebview(webview: vscode.Webview): string{
+
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'out', 'webview.js'))
+
+    const styleMainUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'out', 'display_view.css'))
+
+    const styleAppleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'out', 'apple_view.css'))
+
+    const nonce = getNonce()
+
+    return `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="Content-Security-Policy"
+          content="
+            default-src 'none';
+            img-src ${webview.cspSource} blob:;
+            style-src * 'unsafe-inline';
+            connect-src *;
+            script-src 'nonce-${nonce}';
+          ">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body>
+        <link href="${styleMainUri}" rel="stylesheet" />
+        <link href="${styleAppleUri}" rel="stylesheet" />
+        <div id="top-div"></div>
+        <script nonce="${nonce}" src="${scriptUri}"></script>
+      </body>
+      </html>`
   }
 }
 

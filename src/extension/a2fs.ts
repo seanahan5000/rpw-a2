@@ -35,6 +35,10 @@ class FileDiskImage extends DiskImage {
   constructor(path: string, ext: string, data: Uint8Array, readOnly = false) {
     super(ext, data, readOnly)
     this.path = path
+
+    if (this.isNibFormat) {
+      throw new Error("NIB format files not supported")
+    }
   }
 
   commitChanges() {

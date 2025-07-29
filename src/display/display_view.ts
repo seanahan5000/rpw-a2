@@ -1,42 +1,33 @@
 
 import { Point, Rect } from "../shared/types"
-import { IMachineDisplay, Joystick } from "../shared/types"
+import { IMachineDisplay, IMachineInput, Joystick } from "../shared/types"
 import { IHostHooks } from "../shared/types"
 import { Tool, Cursor, ToolIconNames, ToolCursorNames, ToolCursorOrigins } from "./tools"
 import { ToolHelp, ColorHelp } from "./tools"
 import { PaintDisplay, getModifierKeys } from "./display"
 
-// TODO: fixme
-// import { Project } from "../project"
-type Project = any
-
-// TODO: fixme
-// import tippy from "tippy.js"
-function tippy(a: string, b: any) {}
-
-// TODO: what about these?
-// import "@vscode/codicons/dist/codicon.css"
 // TODO: is this needed for extension?
 // import "./display_view.css"
 
-enum DisplaySource {
-  ACTIVE    = 0,
-  VISIBLE   = 1,
-  PRIMARY   = 2,
-  SECONDARY = 3,
+export enum DisplaySource {
+  Visible   = 0,
+  Active    = 1,
+  Primary   = 2,
+  Secondary = 3,
 }
 
 const displayTemplate = `
   <div id="display-grid">
     <div id="tool-palette"></div>
     <div id="display-div" class="screen-tabs">
+
       <ul class="tabs-list">
         <li id="li0" class="active"><a>Active(0)</a></li>
         <li id="li1"><a>Visible(1)</a></li>
         <li id="li2"><a>Primary</a></li>
         <li id="li3"><a>Secondary</a></li>
       </ul>
-      <div class="edit-btn codicon codicon-edit" id="screen-edit"></div>
+
       <div id="screen-div" class="screen-tab">
         <div id="tool-cursor">
           <div id="crosshair-vert"></div>
@@ -55,11 +46,12 @@ const displayTemplate = `
   </div>`
 
 export class DisplayView {
-  public topDiv?: HTMLDivElement
-  private project?: Project
-  private machineDisplay?: IMachineDisplay
+  public topDiv: HTMLDivElement
+  private machineDisplay: IMachineDisplay
+  private machineInput?: IMachineInput
   private displayMode: string
-  private showPages: boolean
+  private showPageTabs: boolean
+  private showAppleView: boolean
   private allowToggleEdit: boolean
   private startInEditMode: boolean
   private displayGrid: HTMLDivElement
@@ -74,9 +66,9 @@ export class DisplayView {
   private paintCanvas: HTMLCanvasElement
   private paintDisplay: PaintDisplay
   private displaySource: DisplaySource
+  private sourceListener?: (source: DisplaySource, isPaged: boolean, pageIndex: number) => void
   private projectName?: string
   private hostHooks?: IHostHooks
-
   private hasFocus = false
   private isEditing = false
   private leftButtonIsDown = false
@@ -99,16 +91,19 @@ export class DisplayView {
   private hoverLongTimerId?: NodeJS.Timeout
   private hoverVisibleDiv?: HTMLElement
 
-  constructor(parent: HTMLElement, machineDisplay: IMachineDisplay, project?: Project) {
+  public isGame = false
 
-    this.machineDisplay = machineDisplay
-    this.displayMode = machineDisplay?.getDisplayMode() ?? ""
-    this.project = project
+  constructor(parent: HTMLElement, display: IMachineDisplay, input?: IMachineInput, oldUI = false) {
+
+    this.machineDisplay = display
+    this.machineInput = input
+    this.displayMode = this.machineDisplay.getDisplayMode() ?? ""
 
     // TODO: base these on something real
-    this.showPages = (this.project != undefined)
-    this.allowToggleEdit = (this.project != undefined)
-    this.startInEditMode = (this.project == undefined)
+    this.showPageTabs = oldUI && (input != undefined)
+    this.showAppleView = !oldUI && (input != undefined)
+    this.allowToggleEdit = (input != undefined) // (project != undefined)
+    this.startInEditMode = (input == undefined) // (project == undefined)
 
     this.topDiv = <HTMLDivElement>document.createElement("div")
     // TODO: there's security issue with doing this within a VSCode webview
@@ -131,29 +126,30 @@ export class DisplayView {
 
     this.displayDiv = <HTMLDivElement>this.displayGrid.querySelector("#display-div")
     this.paintCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#paint-canvas")
-    this.paintDisplay = new PaintDisplay(this.displayMode, this.paintCanvas, machineDisplay)
+    this.paintDisplay = new PaintDisplay(this.displayMode, this.paintCanvas, this.machineDisplay)
 
     // TODO: clean all this up
     this.toolPalette = <HTMLDivElement>this.displayGrid.querySelector("#tool-palette")
     this.colorPalette = <HTMLDivElement>this.displayGrid.querySelector("#color-palette")
     this.xyPalette = <HTMLDivElement>this.displayGrid.querySelector("#xy-palette")
 
-    if (this.showPages) {
-      this.displaySource = DisplaySource.ACTIVE
+    if (this.showPageTabs || this.showAppleView) {
+      this.displaySource = DisplaySource.Active
     } else {
-      this.displaySource = DisplaySource.PRIMARY
-      let list = <HTMLElement>this.displayDiv.querySelector(".tabs-list")
+      this.displaySource = DisplaySource.Primary
+    }
+
+    if (!this.showPageTabs) {
+      const list = <HTMLElement>this.displayDiv.querySelector(".tabs-list")
       list.style.display = "none"
 
       // TODO: replace these hacks to clean up margin when screen tabs are hidden
       //  with real css classes
       this.toolPalette.style.marginTop = "4px"
       this.displayGrid.style.marginLeft = "0px"
-      let screenTabs = <HTMLDivElement>this.displayGrid.querySelector(".screen-tabs")
+      const screenTabs = <HTMLDivElement>this.displayGrid.querySelector(".screen-tabs")
       screenTabs.style.marginTop = "4px"
     }
-
-    tippy('#screen-edit', { content: 'Edit Screen (\u2318E)' })
 
     // Chrome doesn't support oncopy/onpaste of canvas elements
     //  so manually redirect here
@@ -200,23 +196,18 @@ export class DisplayView {
       }
     })
 
-    let editButton = <HTMLDivElement>this.displayGrid.querySelector("#screen-edit")
-    if (this.showPages) {
-      editButton.onmousedown = (e: MouseEvent) => {
-        e.preventDefault()
-        this.toggleEditMode()
-        this.paintCanvas.focus()
-      }
-    } else {
-      editButton.style.display = "none"
-    }
-
     this.prepareDisplay()
 
-    for (let i = 0; i < 4; i += 1) {
-      let liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + i)
-      liElement.onmousedown = () => {
-        this.onclickDisplaySource(i)
+    if (this.showPageTabs) {
+      for (let source = 0; source < 4; source += 1) {
+        const liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + source)
+        liElement.onmousedown = () => {
+          for (let j = 0; j < 4; j += 1) {
+            const liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + j)
+            liElement.className = j == source ? "active" : ""
+          }
+          this.setDisplaySource(source)
+        }
       }
     }
 
@@ -304,14 +295,20 @@ export class DisplayView {
 
   loadSettings(projectName: string) {
     this.projectName = projectName
-
-    let itemName = this.projectName + "/display"
-    let settingsJSON = localStorage.getItem(itemName)
-    if (settingsJSON) {
-      let settings = JSON.parse(settingsJSON)
-      this.onclickDisplaySource(settings.source)
-    }
+    this.isGame = projectName.toLowerCase().indexOf("naja") != -1
   }
+
+  onResize(width: number, height: number) {
+    this.paintDisplay.resizeDisplay(width, height)
+  }
+
+  public focus() {
+    this.paintCanvas.focus()
+  }
+
+  //--------------------------------------------------------
+  // joystick support
+  //--------------------------------------------------------
 
   private resetJoystick() {
     // choose initial joystickPt based entering location in canvas
@@ -339,31 +336,65 @@ export class DisplayView {
     } else if (this.joystick.y0 > 255) {
       this.joystick.y0 = 255
     }
-    this.project?.machine.setJoystickValues(this.joystick)
+    this.machineInput?.setJoystickValues(this.joystick)
   }
 
-  onResize(width: number, height: number) {
-    this.paintDisplay.resizeDisplay(width, height)
-  }
+  //--------------------------------------------------------
+  // display source and paging UI support
+  //--------------------------------------------------------
 
-  onclickDisplaySource(displaySource: DisplaySource) {
-    for (let i = 0; i < 4; i += 1) {
-      let liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + i)
-      liElement.className = i == displaySource ? "active" : ""
+  public nextDisplaySource(reverse: boolean) {
+    if (this.isPagedFormat()) {
+      let nextSource: number
+      if (reverse) {
+        nextSource = (this.displaySource - 1) & 3
+      } else {
+        nextSource = (this.displaySource + 1) & 3
+      }
+      this.setDisplaySource(nextSource)
     }
+  }
+
+  public setDisplaySource(displaySource: DisplaySource) {
     this.displaySource = displaySource
-
-    if (this.projectName) {
-      // save display source setting
-      let itemName = this.projectName + "/display"
-      let settings = { source: this.displaySource }
-      let settingsJSON = JSON.stringify(settings)
-      localStorage.setItem(itemName, settingsJSON)
-    }
-
-    this.update(this.project?.isCpuRunning() || false)
+    this.callSourceListener()
+    this.update()
     this.paintCanvas.focus()
   }
+
+  public setSourceListener(listener: (source: DisplaySource, isPaged: boolean, pageIndex: number) => void) {
+    this.sourceListener = listener
+    this.callSourceListener()
+  }
+
+  private callSourceListener() {
+    if (this.sourceListener) {
+      this.sourceListener(this.displaySource, this.isPagedFormat(), this.getPageIndex())
+    }
+  }
+
+  private isPagedFormat(): boolean {
+    const formatName = this.paintDisplay.format.name
+    return formatName == "text40" ||
+      formatName.startsWith("lores") ||
+      formatName.startsWith("hires")
+  }
+
+  public getPageIndex(): number {
+    if (this.displaySource == DisplaySource.Primary) {
+      return 0
+    } else if (this.displaySource == DisplaySource.Secondary) {
+      return 1
+    } else if (this.displaySource == DisplaySource.Visible) {
+      return this.machineDisplay.getVisibleDisplayPage() ?? 0
+    } else if (this.displaySource == DisplaySource.Active) {
+      return this.machineDisplay.getActiveDisplayPage() ?? 0
+    } else {
+      return 0
+    }
+  }
+
+  //--------------------------------------------------------
 
   private setTool(toolIndex: Tool, modifiers = 0, doubleClick = false) {
     this.paintDisplay.setTool(toolIndex, modifiers, doubleClick)
@@ -404,10 +435,9 @@ export class DisplayView {
     return this.paintDisplay.getForeColor()
   }
 
-  private toggleEditMode() {
+  public toggleEditMode(): boolean {
     this.isEditing = !this.isEditing
     if (this.isEditing) {
-      this.project?.stopCpu()
       this.paintCanvas.focus()
     }
 
@@ -449,26 +479,13 @@ export class DisplayView {
       this.paintDisplay.setZoomLevel(0, this.mousePt)
       this.paintDisplay.selectNone()
     }
+
+    return this.isEditing
   }
 
-  private getPageIndex(): number {
-    if (this.displaySource == DisplaySource.PRIMARY) {
-      return 0
-    } else if (this.displaySource == DisplaySource.SECONDARY) {
-      return 1
-    } else if (this.displaySource == DisplaySource.VISIBLE) {
-      return this.machineDisplay?.getVisibleDisplayPage() ?? 0
-    } else if (this.displaySource == DisplaySource.ACTIVE) {
-      return this.machineDisplay?.getActiveDisplayPage() ?? 0
-    } else {
-      return 0
-    }
-  }
+  update() {
 
-  update(isRunning: boolean) {
-    // TODO: should this look at isRunning or not?
-    // if (!isRunning)
-    {
+    if (this.showPageTabs) {
       for (let i = 0; i < 2; i += 1) {
         let liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + i)
         let anchorElement = <HTMLAnchorElement>liElement.children[0]
@@ -486,19 +503,17 @@ export class DisplayView {
       }
     }
 
-    if (this.machineDisplay) {
-      const newDisplayMode = this.machineDisplay.getDisplayMode() ?? ""
-      if (newDisplayMode != this.displayMode) {
-        this.displayMode = newDisplayMode
-        const prevTool = this.paintDisplay.getTool()
-        this.paintDisplay = new PaintDisplay(newDisplayMode, this.paintCanvas, this.machineDisplay)
-        this.prepareDisplay()
-        this.paintDisplay.setTool(prevTool)
-      }
+    const newDisplayMode = this.machineDisplay.getDisplayMode() ?? ""
+    if (newDisplayMode != this.displayMode) {
+      this.displayMode = newDisplayMode
+      const prevTool = this.paintDisplay.getTool()
+      this.paintDisplay = new PaintDisplay(newDisplayMode, this.paintCanvas, this.machineDisplay)
+      this.prepareDisplay()
+      this.paintDisplay.setTool(prevTool)
     }
-
     this.paintDisplay.setPageIndex(this.getPageIndex())
     this.paintDisplay.updateFromMemory()
+    this.callSourceListener()
   }
 
   private onToolRectChanged() {
@@ -523,8 +538,7 @@ export class DisplayView {
 
     let str = ""
 
-    const isGame = this.project && this.project.isNaja
-    if (isGame && this.paintDisplay.format.name.startsWith("hires") && this.getTool() == Tool.Select) {
+    if (this.isGame && this.paintDisplay.format.name.startsWith("hires") && this.getTool() == Tool.Select) {
       str = `PictMoveTo ${x1};${y1}`
       if (result.size && (width != 0 || height != 0)) {
         const x2 = x1 + width
@@ -832,7 +846,7 @@ export class DisplayView {
             let ascii60 = "\`abcdefghijklmnopqrstuvwxyz\{\|\}\~"
             let i = ascii60.indexOf(e.key)
             if (i >= 0) {
-              appleCode = 0x40 + i
+              appleCode = 0x60 + i
             } else {
               let ascii20 = " \!\"\#\$\%\&\'\(\)\*\+\,\-\.\/0123456789\:\;\<\=\>\?"
               let i = ascii20.indexOf(e.key)
@@ -846,13 +860,17 @@ export class DisplayView {
           let code = e.which
           if (code < 0x80) {
             if (e.ctrlKey) {
-              // NOTE: assuming lower case supported, so only forcing
-              //  to upper case before applying control modifier
-              if (code >= 0x61 && code <= 0x7a) {  // 'a' to 'z'
-                  code -= 0x20  // 'a' - 'A'
-              }
-              if (code >= 0x40 && code < 0x60) {
-                code -= 0x40
+              if (code == 17) {
+                code = 0  // ignore control key by itself
+              } else {
+                // NOTE: assuming lower case supported, so only forcing
+                //  to upper case before applying control modifier
+                if (code >= 0x61 && code <= 0x7a) {  // 'a' to 'z'
+                    code -= 0x20  // 'a' - 'A'
+                }
+                if (code >= 0x40 && code < 0x60) {
+                  code -= 0x40
+                }
               }
             } else {
               switch (code) {
@@ -868,6 +886,11 @@ export class DisplayView {
                 case 40:
                   code = 10   // down arrow
                   break
+                case 16:      // shift
+                case 18:      // option
+                case 20:      // capslock
+                  code = 0    // ignore
+                  break
               }
             }
             if (e.key != "Meta") {
@@ -877,7 +900,7 @@ export class DisplayView {
         }
 
         if (appleCode) {
-          this.project?.machine.setKeyCode(appleCode)
+          this.machineInput?.setKeyCode(appleCode)
           // eat everything (backspace, tab, escape, arrows)
           //  that goes to Apple 2
           e.preventDefault()

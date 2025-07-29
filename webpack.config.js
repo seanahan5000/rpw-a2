@@ -32,9 +32,7 @@ const extConfig = {
                 use: [{
                     loader: 'ts-loader',
                     options: {
-                        compilerOptions: {
-                            "module": "es6"
-                        }
+                        configFile: 'tsconfig.json'
                     }
                 }]
             },
@@ -48,6 +46,7 @@ const extConfig = {
         new CopyWebpackPlugin({
             patterns: [
                 { from: 'src/display/display_view.css' },
+                { from: 'src/machine/apple_view.css' },
                 { from: 'src/data_viewers.css' }
             ]
         })

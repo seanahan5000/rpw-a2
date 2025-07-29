@@ -102,6 +102,14 @@ export class ScreenDisplay {
   public onColorChanged?: (oldColor: number, newColor: number, isBack: boolean) => void
 
   constructor(formatName: string, canvas: HTMLCanvasElement) {
+
+    const isMixed = formatName.endsWith(".mixed")
+    // TODO: use isMixed for something
+
+    if (isMixed) {
+      formatName = formatName.substring(0, formatName.length - 6)
+    }
+
     this.format = formatMap.get(formatName)!
     this.canvas = canvas
 
@@ -1733,7 +1741,7 @@ export class PaintDisplay extends ZoomDisplay {
         this.captureUndo()
 
         this.editText = ""
-        this.editFont = Font.create((modifiers & ModifierKeys.SHIFT) ? "naja" : "appleiie")
+        this.editFont = Font.create((modifiers & ModifierKeys.SHIFT) ? "naja" : "a2e")
         const charRect = {
           x: this.frameStartPt.x,
           y: this.frameStartPt.y - this.editFont.charSize.height,

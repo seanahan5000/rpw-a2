@@ -1,0 +1,71 @@
+
+.apple-div {
+  font-family: "Menlo", "Monaco", monospace;
+  float: left;
+  width: 560px;
+  margin-left: 4px;
+}
+
+.apple-icon {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  float: left;
+  font-size: 8pt;
+  margin-left: 2px;
+  margin-right: 2px;
+  border-radius: 4px;
+}
+
+.apple-icon img {
+  padding-left: 4px;
+  padding-top: 4px;
+  height: 24px;
+}
+
+.apple-icon.hilite {
+  background-color: #333;
+}
+
+.apple-icon-page-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.apple-icon-page {
+  color: #888;
+  font-size: 7pt;
+  position: absolute;
+  bottom: 0;
+  right: 0;
+}
+
+.apple-drive {
+  width: 44px;
+}
+
+.apple-drive.drag {
+  background-color: #333;
+}
+
+.apple-help {
+  border-radius: 0px;
+  margin-top: -28px;
+}
+
+.apple-reboot .apple-help {
+  margin-top: -42px;
+}
+
+.apple-screen .apple-help {
+  margin-top: -42px;
+}
+
+.apple-icon .apple-help {
+  margin-left: 16px;
+}
+
+.apple-drive .apple-help {
+  margin-left: 22px;
+}

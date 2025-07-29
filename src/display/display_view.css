@@ -74,19 +74,6 @@
   color:lightgray !important;
 }
 
-#screen-edit {
-  font-size: 20px !important;
-  float: top;
-  color: #EF715E;
-  margin-top: 0px;
-  margin-left: 8px;
-  margin-bottom: 0px;
-  padding-top: 2px;
-  padding-left: 4px;
-  padding-bottom: 2px;
-  padding-right: 4px;
-}
-
 .edit-btn:hover {
   background-color: #333;
   border-radius: 6px;
@@ -107,6 +94,7 @@
 
 #paint-canvas:focus {
   border-color:#888;
+  outline: none;
 }
 
 /* tool palette */

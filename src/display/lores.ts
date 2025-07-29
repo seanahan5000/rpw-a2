@@ -117,9 +117,9 @@ class LoresBitmap extends Bitmap {
     let dstOffset = 0
     for (let y = 0; y < this.height; y += 2) {
       for (let x = 0; x < this.width; x += 1) {
-        let dataByte = this.data[srcOffset + x] << 4
+        let dataByte = this.data[srcOffset + x]
         if (y + 1 < this.height) {
-          dataByte |= this.data[srcOffset + this.stride + x]
+          dataByte |= this.data[srcOffset + this.stride + x] << 4
         }
         pixelData.bytes[dstOffset + x] = dataByte
       }
@@ -135,9 +135,9 @@ class LoresBitmap extends Bitmap {
     for (let y = 0; y < this.height; y += 2) {
       for (let x = 0; x < pixelData.byteWidth; x += 1) {
         const dataByte = pixelData.bytes[srcOffset + x]
-        this.data[dstOffset + x] = dataByte >> 4
+        this.data[dstOffset + x] = dataByte & 0x0F
         if (y + 1 < this.height) {
-          this.data[dstOffset + this.stride + x] = dataByte & 0x0F
+          this.data[dstOffset + this.stride + x] = dataByte >> 4
         }
       }
       srcOffset += pixelData.byteWidth

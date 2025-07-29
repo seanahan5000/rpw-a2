@@ -1,5 +1,15 @@
 # RPW A2 Changelog
 
+### [3.0.0] - 2025-07-29
+
+#### Added:
+* Emulation of Apple II+ and IIe hardware
+* Debugger protocol support
+* Disk image nibbilizing/denibbilizing
+
+#### Fixed:
+* Lores pixel ordering
+
 ### [2.0.3] - 2025-02-07
 
 #### Added:

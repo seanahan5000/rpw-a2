@@ -1,6 +1,26 @@
-This Retro Programmer's Workshop (RPW) extension provides VSCode editor support for Apple II graphics files and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for other related funtionality.)
+This Retro Programmer's Workshop (RPW) extension provides VSCode support for Apple II emulation, graphics file editing, and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for other related funtionality.)
+
+New for version 3.0: Apple II+ and IIe hardware emulation.
 
 New for version 2.0: Graphics editor support for double-HIRES and double-LORES graphics and a full suite of pixel editing tools.
+
+#### Apple II Emulation
+
+* II+ and IIe (unenhanced) hardware
+* Speaker
+* 5.25" floppy
+* Most display modes
+* Mockingboard (partial)
+* State snapshots and rewind
+* Debugging support with RPW65 extension
+
+<img src="images/rpwa2-emu.gif"/>
+
+##### Known Problems
+
+* Mixed text and grqphics mode not supported
+* Disk writing not supported
+* Mockingboard support is very limited for now
 
 #### Apple Graphics Editor
 
@@ -32,15 +52,15 @@ This extension has been tested by opening and verifying most images in the Asimo
 
 The file conversion functionality in RPW A2 is enough to access old code and graphics, but is not intendend as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like Ciderpress.
 
-### Known Problems
+##### Known Problems
 
 * File system error information such as Disk Full is buried in the VSCode error reporting dialog and not visible without viewing the full message.  It's unclear how to make VSCode display just the relevant information without the extra noise.
 
-#### ProDOS
+###### ProDOS
 
 * Sparse files are not directly supported and will be converted to their expanded form if copied.
 
-#### DOS 3.3
+###### DOS 3.3
 
 * Non-sequential text files are not supported.
 * File names containing the "/" character can't be accessed.

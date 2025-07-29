@@ -150,23 +150,26 @@ export enum SectorOrder {
   Prodos
 }
 
+const NibbleTrackSize = 6656
+const NibbleFileSize = 35 * NibbleTrackSize
+
 export class DiskImage {
   protected fullData: Uint8Array
   private diskData: Uint8Array
   public imageOrder: SectorOrder = SectorOrder.Unknown
   public dosOrder: SectorOrder = SectorOrder.Unknown
   protected workingData?: Uint8Array
-  protected isReadOnly: boolean
+  public isReadOnly: boolean
+  public isNibFormat: boolean
   private tmg?: TwoMGHeader
 
   constructor(typeName: string, data: Uint8Array, isReadOnly = false) {
     this.fullData = data
     this.diskData = this.fullData
     this.isReadOnly = isReadOnly
+    this.isNibFormat = false
     switch (typeName) {
       case "dsk":
-        this.imageOrder = SectorOrder.Unknown
-        this.dosOrder = SectorOrder.Unknown
         break
       case "do":
         this.imageOrder = SectorOrder.Dos33
@@ -183,21 +186,28 @@ export class DiskImage {
         if (this.tmg.imageFormat == TwoMGFormat.Dos33) {
           this.imageOrder = SectorOrder.Dos33
           this.dosOrder = SectorOrder.Dos33
-          // TODO: should the volume's lock be respected here?
           this.isReadOnly = this.tmg.dos33Locked
         } else if (this.tmg.imageFormat == TwoMGFormat.Prodos) {
           this.imageOrder = SectorOrder.Prodos
           this.dosOrder = SectorOrder.Prodos
-          // TODO: anything else?
         } else if (this.tmg.imageFormat == TwoMGFormat.Nib) {
-          throw new Error(".2mg NIB files not supported")
+          this.isNibFormat = true
         }
         const offset = this.tmg.dataOffset
         const length = this.tmg.dataSize
         this.diskData = this.fullData.subarray(offset, offset + length)
         break
+      case "nib":
+        this.isNibFormat = true
+        break
       default:
         throw new Error(`Unknown disk volume type "${typeName}"`)
+    }
+
+    if (this.isNibFormat) {
+      if (this.diskData.length != NibbleFileSize) {
+        throw new Error(`Unexpected data size (expected ${NibbleFileSize}, got ${this.diskData.length})`)
+      }
     }
   }
 
@@ -217,10 +227,12 @@ export class DiskImage {
   // used by Dos 3.3
 
   public readTrackSector(t: number, s: number): SectorData {
+    if (this.isNibFormat) {
+      throw new Error("readTrackSector not allowed on nibble image")
+    }
     if (this.dosOrder != SectorOrder.Dos33) {
       throw new Error("readTrackSector not allowed on Prodos image")
     }
-
     if (!this.workingData) {
       this.workingData = this.snapWorkingData()
     }
@@ -235,10 +247,12 @@ export class DiskImage {
   // used by Prodos
 
   public readBlock(index: number): BlockData {
+    if (this.isNibFormat) {
+      throw new Error("readTrackSector not allowed on nibble image")
+    }
     if (this.dosOrder != SectorOrder.Prodos) {
       throw new Error("readBlock not allowed on DOS 3.3 image")
     }
-
     if (!this.workingData) {
       this.workingData = this.snapWorkingData()
     }
@@ -315,6 +329,413 @@ export class DiskImage {
       offset += 16 * 256
     }
   }
+
+  //------------------------------------
+  // image nibblizing
+  //------------------------------------
+
+  private buffer342?: number[]
+
+  public nibblize(volume?: number): Uint8Array {
+
+    if (!this.isNibFormat && this.dosOrder == SectorOrder.Unknown) {
+      deduceFormat(this)
+    }
+
+    if (!this.workingData) {
+      this.workingData = this.snapWorkingData()
+    }
+
+    if (this.isNibFormat) {
+      return this.workingData
+    }
+
+    let linearToDos: number[]
+    if (this.dosOrder == SectorOrder.Prodos) {
+      linearToDos = this.linearToProdos
+      if (volume == undefined) {
+        volume = 254
+      }
+    } else {
+      linearToDos = this.linearToDos33
+      if (volume == undefined) {
+        if (this.tmg) {
+          volume = this.tmg.dos33Volume
+        } else {
+          volume = 254
+        }
+      }
+    }
+
+    if (!this.buffer342) {
+      this.buffer342 = new Array(342)
+    }
+
+    const outData = new Uint8Array(NibbleFileSize)
+
+    let offset = 0
+    for (let t = 0; t < 35; t += 1) {
+      const trackData = outData.subarray(offset, offset + NibbleTrackSize)
+      this.nibbilizeTrack(volume, t, trackData, linearToDos)
+      offset += NibbleTrackSize
+    }
+
+    return outData
+  }
+
+  private nibbilizeTrack(volume: number, track: number, trackData: Uint8Array, linearToDos: number[]) {
+
+    const dstBuffer = trackData
+    let dstOffset = this.writeSync(48, dstBuffer, 0)
+
+    for (let physSector = 0; physSector < 16; physSector += 1) {
+
+      dstBuffer[dstOffset++] = 0xD5
+      dstBuffer[dstOffset++] = 0xAA
+      dstBuffer[dstOffset++] = 0x96
+      dstOffset = this.writeOddEven(volume, dstBuffer, dstOffset)
+      dstOffset = this.writeOddEven(track, dstBuffer, dstOffset)
+      dstOffset = this.writeOddEven(physSector, dstBuffer, dstOffset)
+      dstOffset = this.writeOddEven(volume ^ track ^ physSector, dstBuffer, dstOffset)
+      dstBuffer[dstOffset++] = 0xDE
+      dstBuffer[dstOffset++] = 0xAA
+      dstBuffer[dstOffset++] = 0xEB
+
+      dstOffset = this.writeSync(6, dstBuffer, dstOffset)
+
+      dstBuffer[dstOffset++] = 0xD5
+      dstBuffer[dstOffset++] = 0xAA
+      dstBuffer[dstOffset++] = 0xAD
+
+      const offset = (track * 16 + linearToDos[physSector]) * 256
+      const sectorData = this.workingData!.subarray(offset, offset + 256)
+      dstOffset = this.writeSectorData(sectorData, dstBuffer, dstOffset)
+
+      dstBuffer[dstOffset++] = 0xDE
+      dstBuffer[dstOffset++] = 0xAA
+      dstBuffer[dstOffset++] = 0xEB
+
+      dstOffset = this.writeSync(27, dstBuffer, dstOffset)
+    }
+  }
+
+  private writeSync(count: number, buffer: Uint8Array, offset: number): number {
+    const endOffset = offset + count
+    buffer.fill(0xFF, offset, endOffset)
+    return endOffset
+  }
+
+  private writeOddEven(value: number, buffer: Uint8Array, offset: number): number {
+    buffer[offset++] = (value >> 1) | 0xAA
+    buffer[offset++] = (value >> 0) | 0xAA
+    return offset
+  }
+
+  private writeSectorData(sectorData: Uint8Array, dstBuffer: Uint8Array, dstOffset: number): number {
+
+    this.buffer342!.fill(0)
+
+    let j = 256 + 2
+    for (let i = 256; --i >= 0; ) {
+      let byte = sectorData[i]
+      let outBits = this.buffer342![j]
+
+      outBits <<= 1
+      outBits |= byte & 1
+      byte >>= 1
+
+      outBits <<= 1
+      outBits |= byte & 1
+      byte >>= 1
+
+      this.buffer342![j] = outBits
+      this.buffer342![i ^ 255] = byte
+
+      if (++j == 342) {
+        j = 256
+      }
+    }
+
+    let last = 0
+    for (let i = 342; --i >= 0; ) {
+      const value = this.buffer342![i]
+      dstBuffer[dstOffset++] = DiskImage.WriteTranslateTable[value ^ last]
+      last = value
+    }
+    dstBuffer[dstOffset++] = DiskImage.WriteTranslateTable[last]
+    return dstOffset
+  }
+
+  private static readonly WriteTranslateTable = [
+		0x96, 0x97, 0x9A, 0x9B, 0x9D, 0x9E, 0x9F, 0xA6,
+		0xA7, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB2, 0xB3,
+		0xB4, 0xB5, 0xB6, 0xB7, 0xB9, 0xBA, 0xBB, 0xBC,
+		0xBD, 0xBE, 0xBF, 0xCB, 0xCD, 0xCE, 0xCF, 0xD3,
+		0xD6, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE,
+		0xDF, 0xE5, 0xE6, 0xE7, 0xE9, 0xEA, 0xEB, 0xEC,
+		0xED, 0xEE, 0xEF, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6,
+		0xF7, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF
+  ]
+
+  //------------------------------------
+  // image denibblizing
+  //------------------------------------
+
+  private readTranslate?: Uint8Array
+
+  // TODO: option to denibblize just a single track?
+  public denibblize(nibbleData: Uint8Array) {
+
+    if (this.isNibFormat) {
+      // TODO: copy nibbleData instead?
+      return
+    }
+
+    if (!this.workingData) {
+      this.workingData = this.snapWorkingData()
+    }
+
+    if (!this.buffer342) {
+      this.buffer342 = new Array(342)
+    }
+
+    if (!this.readTranslate) {
+      this.readTranslate = new Uint8Array(256).fill(0xEE)
+    }
+
+    for (let i = 0; i < DiskImage.WriteTranslateTable.length; i += 1) {
+      this.readTranslate[DiskImage.WriteTranslateTable[i]] = i
+    }
+
+    let linearToDos: number[]
+    if (this.dosOrder == SectorOrder.Dos33) {
+      linearToDos = this.linearToDos33
+    } else {
+      linearToDos = this.linearToProdos
+    }
+
+    // *** try/catch? return success boolean? ***
+
+    let offset = 0
+    for (let t = 0; t < 35; t += 1) {
+      const trackData = nibbleData.subarray(offset, offset + NibbleTrackSize)
+      this.denibbilizeTrack(t, trackData, linearToDos)
+      offset += NibbleTrackSize
+    }
+  }
+
+  private denibbilizeTrack(track: number, trackData: Uint8Array, linearToDos: number[]) {
+
+    let offset = 0
+    let sectorCount = 0
+    const sectorData = new Uint8Array(256)
+
+    while (true) {
+
+      offset = this.findAddressHeader(trackData, offset)
+
+      if (offset + 8 > trackData.length) {
+        break
+      }
+
+      const volume = this.readEvenOdd(trackData, offset)
+      offset += 2
+      const strack = this.readEvenOdd(trackData, offset)
+      offset += 2
+      const sector = this.readEvenOdd(trackData, offset)
+      offset += 2
+      const checksum = this.readEvenOdd(trackData, offset)
+      offset += 2
+      if ((volume ^ strack ^ sector) != checksum) {
+        throw new Error(`Denibblize error: Invalid address header checksum (t:${strack}, s:${sector})`)
+      }
+      if (strack != track) {
+        throw new Error(`Denibblize error: Expected track ${track}, got ${strack}`)
+      }
+
+      // TODO: DOS doesn't check if 0xEB is valid here
+      offset = this.expectValues([0xDE, 0xAA, 0xEB], trackData, offset)
+
+      while (offset < trackData.length) {
+        const value = trackData[offset]
+        if (value != 0xFF) {
+          break
+        }
+        offset += 1
+      }
+
+      offset = this.expectValues([0xD5, 0xAA, 0xAD], trackData, offset)
+
+      if (offset + 343 > trackData.length) {
+        break
+      }
+
+      let last = 0
+      for (let i = 85; i >= 0; --i) {
+        const value = this.readTranslate![trackData[offset++]] ^ last
+        this.buffer342![256 + i] = value
+        last = value
+      }
+      for (let i = 0; i < 256; ++i) {
+        const value = this.readTranslate![trackData[offset++]] ^ last
+        this.buffer342![i] = value
+        last = value
+      }
+      last ^= this.readTranslate![trackData[offset++]]
+      if (last != 0) {
+        throw new Error(`Denibblize error: bad sector checksum`)
+      }
+
+      let j = 85
+      for (let i = 0; i < 256; i += 1) {
+        let bits = this.buffer342![256 + j]
+        this.buffer342![256 + j] = bits >> 2
+
+        let value = this.buffer342![i] << 2
+        if (bits & 1) {
+          value |= 2
+        }
+        if (bits & 2) {
+          value |= 1
+        }
+        if (--j < 0) {
+          j = 85
+        }
+        sectorData[i] = value
+      }
+
+      offset = this.expectValues([0xDE, 0xAA, 0xEB], trackData, offset)
+
+      const sectorOffset = (track * 16 + linearToDos[sector]) * 256
+      this.workingData!.set(sectorData, sectorOffset)
+      sectorCount += 1
+    }
+
+    if (sectorCount < 16) {
+      throw new Error(`Denibblize error: only ${sectorCount} sectors of 16 found`)
+    }
+  }
+
+  private findAddressHeader(buffer: Uint8Array, offset: number): number {
+    while (true) {
+      while (true) {
+        if (offset >= buffer.length) {
+          return offset
+        }
+        if (buffer[offset++] == 0xD5) {
+          break
+        }
+      }
+      if (offset < buffer.length) {
+        if (buffer[offset++] != 0xAA) {
+          continue
+        }
+      }
+      if (offset < buffer.length) {
+        if (buffer[offset++] != 0x96) {
+          continue
+        }
+      }
+      break
+    }
+    return offset
+  }
+
+  private readEvenOdd(buffer: Uint8Array, offset: number): number {
+    const value0 = buffer[offset + 0]
+    const value1 = buffer[offset + 1]
+    return ((value0 << 1) & 0xAA) | (value1 & 0x55)
+  }
+
+  private expectValues(expected: number[], buffer: Uint8Array, offset: number): number {
+    if (offset + expected.length <= buffer.length) {
+      for (const expect of expected) {
+        const got = buffer[offset++]
+        if (expect != got) {
+          throw new Error(`Denibblize error: expected 0x${expect.toString(16)}, got 0x${got.toString(16)}`)
+        }
+      }
+    }
+    return offset
+  }
+}
+
+//------------------------------------------------------------------------------
+
+function deduceFormat(image: DiskImage) {
+  if (image.imageOrder == SectorOrder.Unknown) {
+
+    const dosOrders   = [ SectorOrder.Dos33, SectorOrder.Prodos, SectorOrder.Prodos, SectorOrder.Unknown ]
+    const imageOrders = [ SectorOrder.Dos33, SectorOrder.Dos33,  SectorOrder.Prodos, SectorOrder.Unknown ]
+
+    for (let i = 0; i < dosOrders.length; i += 1) {
+      image.revertChanges()
+      image.dosOrder = dosOrders[i]
+      image.imageOrder = imageOrders[i]
+      if (image.dosOrder == SectorOrder.Dos33) {
+        if (checkDos33Image(image)) {
+          return
+        }
+      } else if (image.dosOrder == SectorOrder.Prodos) {
+        if (checkProdosImage(image)) {
+          return
+        }
+      // } else {
+      //   throw new Error(`Unknown disk volume sector order`)
+      }
+    }
+
+    // if format can't be deduced, just assume DOS 3.3
+    image.revertChanges()
+    image.dosOrder = SectorOrder.Dos33
+    image.imageOrder = SectorOrder.Dos33
+  }
+}
+
+function checkDos33Image(image: DiskImage): boolean {
+  try {
+    const vtoc = image.readTrackSector(17, 0)
+    if (vtoc.data[0x27] == 122) {
+      const catTrack = vtoc.data[0x01]
+      const catSector = vtoc.data[0x02]
+      const numTracks = vtoc.data[0x34]
+      const numSectors = vtoc.data[0x35]
+      if (numTracks <= 35) {
+        if (numSectors == 16 || numSectors == 13) {
+          if (catTrack < numTracks && catSector < numSectors) {
+            return true
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+  }
+  return false
+}
+
+function checkProdosImage(image: DiskImage): boolean {
+  try {
+    const block = image.readBlock(2)
+    if (block.data[0] == 0x00 && block.data[1] == 0x00) {
+      const entryLength = block.data[0x1F + 4]
+      const entriesPerBlock = block.data[0x20 + 4]
+      const entriesSize = entryLength * entriesPerBlock
+      if (entriesSize > 0 && entriesSize <= 512) {
+        // first entry must be allocated
+        if ((block.data[0x00 + 4] & 0xF0) == 0xF0) {
+          if ((block.data[0x00 + 4] & 0x0F) != 0) {
+            // name starts with A->Z
+            const char = block.data[0x01 + 4]
+            if (char >= 0x41 && char <= 0x5A) {
+              return true
+            }
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+  }
+  return false
 }
 
 //------------------------------------------------------------------------------

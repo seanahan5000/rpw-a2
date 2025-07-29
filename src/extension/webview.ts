@@ -1,4 +1,7 @@
 
+import * as base64 from 'base64-js'
+import { AppleEmulator, AppleParams, AppleIcon } from "../machine/apple_view"
+import { FileDiskImage } from "../machine/machine"
 import { DisplayView } from "../display/display_view"
 import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
 import { IMachineDisplay, IHostHooks, PixelData } from "../shared/types"
@@ -8,66 +11,26 @@ import { deinterleave40, deinterleave80 } from "../display/text"
 // @ts-ignore
 const vscode = acquireVsCodeApi()
 
-class Webview implements IMachineDisplay, IHostHooks {
+//------------------------------------------------------------------------------
 
-  private graphicsData?: Uint8Array
-  private displayView?: DisplayView
+class GraphicsView implements IMachineDisplay, IHostHooks {
 
-  constructor() {
-    window.addEventListener("message", async e => { this.handleMessage(e) })
+  public display: DisplayView
+
+  constructor(topDiv: HTMLDivElement, public graphicsData: Uint8Array) {
+    this.display = new DisplayView(topDiv, this)
+    this.display.setHostHooks(this)
+    this.display.update()
   }
 
-  async handleMessage(e: MessageEvent) {
-    const { type, body, requestId } = e.data
-    switch (type) {
-
-      case "init": {
-        const dataBlob = new Blob([ body.value ])
-        const dataArray = await dataBlob.arrayBuffer()
-        const dataBytes = new Uint8Array(dataArray)
-
-        const topDiv = <HTMLDivElement>document.querySelector("#top-div")
-        if (body.type == "PIC") {
-          // TODO: remember size of original incoming data?
-          // TODO: what about extra data? read-only?
-          // TODO: support new/untitled document?
-          this.graphicsData = dataBytes
-          this.displayView = new DisplayView(topDiv, this)
-          this.displayView.setHostHooks(this)
-          this.displayView.update(false)
-          //*** look at body.editable flag ***
-        } else if (body.type == "BAS") {
-          topDiv.innerHTML = ViewApplesoft.asText(dataBytes, true)
-        } else if (body.type == "INT") {
-          topDiv.innerHTML = ViewInteger.asText(dataBytes, true)
-        } else if (body.type == "TXT") {
-          topDiv.innerHTML = ViewText.asText(dataBytes, false, true)
-        } else if (body.type == "LST") {
-          topDiv.innerHTML = ViewBinaryDisasm.asText(dataBytes, body.auxType, 0, true)
-        } else { // if (body.type == "BIN")
-          topDiv.innerHTML = ViewBinaryHex.asText(dataBytes, body.auxType, true)
-        }
-        break
-      }
-
-      case "update": {
-        if (body.editType == "undo") {
-          this.displayView?.undo()
-        } else if (body.editType == "redo") {
-          this.displayView?.redo()
-        } else if (body.editType == "revert") {
-          this.graphicsData = body.contents
-          this.displayView?.revertUndo(body.editIndex)
-        }
-        break
-      }
-
-      case "getFileData": {
-        if (this.displayView && this.graphicsData) {
-          vscode.postMessage({ type: "response", requestId, body: Array.from(this.graphicsData) })
-        }
-        break
-      }
+  public update(body: any) {
+    if (body.editType == "undo") {
+      this.display.undo()
+    } else if (body.editType == "redo") {
+      this.display.redo()
+    } else if (body.editType == "revert") {
+      this.graphicsData = body.contents
+      this.display.revertUndo(body.editIndex)
     }
   }
 
@@ -96,15 +59,13 @@ class Webview implements IMachineDisplay, IHostHooks {
     return "unknown"
   }
 
-  getVisibleDisplayPage(): number {
+  public getVisibleDisplayPage(): number {
     return 0
   }
 
-  getActiveDisplayPage(): number {
+  public getActiveDisplayPage(): number {
     return 0
   }
-
-  // IMachineDisplay
 
   public getDisplayMemory(frame: PixelData, page: number): void {
     if (this.graphicsData) {
@@ -171,5 +132,118 @@ class Webview implements IMachineDisplay, IHostHooks {
   }
 }
 
-const webview = new Webview()
+//------------------------------------------------------------------------------
+
+class Webview {
+
+  private appleEmu?: AppleEmulator
+  private graphicsView?: GraphicsView
+
+  constructor(private state?: any) {
+    window.addEventListener("message", async e => {
+      this.handleMessage(e)
+    })
+  }
+
+  async handleMessage(e: MessageEvent) {
+    const { type, body, requestId } = e.data
+
+    switch (type) {
+
+      // test for problem where Chromium sometimes throttles timers
+      case "ping": {
+        const startTime = Date.now()
+        setTimeout(() => {
+          const delay = Date.now() - startTime
+          vscode.postMessage({ type: "ping", delay })
+        }, 1)
+        break
+      }
+
+      case "init": {
+        const topDiv = <HTMLDivElement>document.querySelector("#top-div")
+        if (body.type == "emu") {
+          const params: AppleParams = {
+            machine: body.machine ?? "iie",
+            debugPort: body.debugPort ?? 6502,
+            stopOnEntry: body.stopOnEntry ?? false,
+            saveState: this.state
+          }
+          this.appleEmu = new AppleEmulator(topDiv, params, (index: number) => {
+            if (index == AppleIcon.Drive0 || index == AppleIcon.Drive1) {
+              vscode.postMessage({ type: "driveClick", driveIndex: index })
+            } else if (index == AppleIcon.Snapshot) {
+              // TODO: capture the data here? in AppleView?
+              vscode.postMessage({ type: "snapshot" })
+            }
+          })
+        } else {
+          const dataBlob = new Blob([ body.value ])
+          const dataArray = await dataBlob.arrayBuffer()
+          const dataBytes = new Uint8Array(dataArray)
+
+          if (body.type == "PIC") {
+            // TODO: remember size of original incoming data?
+            // TODO: what about extra data? read-only?
+            // TODO: support new/untitled document?
+            // TODO: look at body.editable flag
+            this.graphicsView = new GraphicsView(topDiv, dataBytes)
+          } else if (body.type == "BAS") {
+            topDiv.innerHTML = ViewApplesoft.asText(dataBytes, true)
+          } else if (body.type == "INT") {
+            topDiv.innerHTML = ViewInteger.asText(dataBytes, true)
+          } else if (body.type == "TXT") {
+            topDiv.innerHTML = ViewText.asText(dataBytes, false, true)
+          } else if (body.type == "LST") {
+            topDiv.innerHTML = ViewBinaryDisasm.asText(dataBytes, body.auxType, 0, true)
+          } else { // if (body.type == "BIN")
+            topDiv.innerHTML = ViewBinaryHex.asText(dataBytes, body.auxType, true)
+          }
+        }
+        break
+      }
+
+      case "saveState": {
+        if (this.appleEmu) {
+          const saveState = this.appleEmu.machine.getState()
+          await this.appleEmu.machine.flattenState(saveState)
+          vscode.setState(saveState)
+        }
+        break
+      }
+
+      case "update": {
+        if (this.graphicsView) {
+          this.graphicsView.update(body)
+        }
+        break
+      }
+
+      case "getFileData": {
+        if (this.graphicsView) {
+          vscode.postMessage({ type: "response", requestId, body: Array.from(this.graphicsView.graphicsData) })
+        }
+        break
+      }
+
+      case "setDiskImage": {
+        if (this.appleEmu && body.dataString) {
+          // TODO: call appleEmu and have it do most of this instead
+          const dataBytes = base64.toByteArray(body.dataString)
+          const diskImage = new FileDiskImage(body.fullPath, dataBytes, body.writeProtected)
+          const driveIndex = body.driveIndex ?? 0
+          this.appleEmu.machine.setDiskImage(driveIndex, diskImage)
+          this.appleEmu.machine.display.displayView.focus()
+        }
+        break
+      }
+    }
+  }
+}
+
+//------------------------------------------------------------------------------
+
+const state = vscode.getState()
+vscode.setState(undefined)
+const webview = new Webview(state)
 vscode.postMessage({ type: "ready" })

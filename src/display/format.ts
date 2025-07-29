@@ -250,7 +250,7 @@ export abstract class Bitmap {
     }
   }
 
-  public bitsToMask(bits: number[], startMask: number, endMask: number, pt: Point, scale: Point) {
+  public bitsToMask(bits: number[] | Uint8Array, startMask: number, endMask: number, pt: Point, scale: Point) {
     let dstY = pt.y
     let dstOffset = pt.y * this.stride
     for (let bitLine = 0; bitLine < bits.length; bitLine += 1) {
