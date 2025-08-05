@@ -4,7 +4,7 @@
 	"description": "Apple II emulator, graphics editor, and ProDOS and DOS 3.3 file system providers",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "3.0.0",
+	"version": "3.0.1",
 	"license": "MIT",
 	"repository": {
 		"type": "git",

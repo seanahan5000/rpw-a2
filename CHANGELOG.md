@@ -1,5 +1,10 @@
 # RPW A2 Changelog
 
+### [3.0.1] - 2025-08-05
+
+#### Added:
+* Updated readme and added screen shot of debugger
+
 ### [3.0.0] - 2025-07-29
 
 #### Added:

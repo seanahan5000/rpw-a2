@@ -1,4 +1,4 @@
-This Retro Programmer's Workshop (RPW) extension provides VSCode support for Apple II emulation, graphics file editing, and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for other related funtionality.)
+This Retro Programmer's Workshop (RPW) extension provides VSCode support for Apple II emulation, graphics file editing, and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for related funtionality.)
 
 New for version 3.0: Apple II+ and IIe hardware emulation.
 
@@ -8,11 +8,10 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 
 * II+ and IIe (unenhanced) hardware
 * Speaker
-* 5.25" floppy
+* 5.25" floppy (read-only)
 * Most display modes
 * Mockingboard (partial)
 * State snapshots and rewind
-* Debugging support with RPW65 extension
 
 <img src="images/rpwa2-emu.gif"/>
 
@@ -22,7 +21,15 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 * Disk writing not supported
 * Mockingboard support is very limited for now
 
-#### Apple Graphics Editor
+#### Debugging with RPW 65 Extension
+
+<img src="images/rpwa2-dbg.png"/>
+
+See these projects for example configurations:
+https://github.com/seanahan5000/kaboom
+https://github.com/seanahan5000/applz
+
+#### Graphics Editor
 
 <img src="images/rpwa2.gif"/>
 
@@ -56,11 +63,11 @@ The file conversion functionality in RPW A2 is enough to access old code and gra
 
 * File system error information such as Disk Full is buried in the VSCode error reporting dialog and not visible without viewing the full message.  It's unclear how to make VSCode display just the relevant information without the extra noise.
 
-###### ProDOS
+##### ProDOS
 
 * Sparse files are not directly supported and will be converted to their expanded form if copied.
 
-###### DOS 3.3
+##### DOS 3.3
 
 * Non-sequential text files are not supported.
 * File names containing the "/" character can't be accessed.
