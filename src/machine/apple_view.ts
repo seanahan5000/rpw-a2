@@ -352,6 +352,7 @@ export class AppleView {
 
   //----------------------------------------------------------------------------
 
+  // TODO: remove this -- only needed when running in browser
   private async onDriveClick(driveIndex: number, e: MouseEvent) {
     let obj: any = (window as any)
     if (obj) {
@@ -381,6 +382,7 @@ export class AppleView {
     }
   }
 
+  // handle dragged-and-dropped file
   private async openDiskFile(fsHandle: FileSystemHandle): Promise<FileDiskImage | undefined> {
     if (fsHandle.kind == "directory") {
       return
@@ -396,13 +398,12 @@ export class AppleView {
       const dataBlob = await fileHandle.getFile()
       const dataArray = await dataBlob.arrayBuffer()
       const data = new Uint8Array(dataArray)
-      // NOTE: For now, make all disk images read-only.
+      // NOTE: For now, make all drag-and-drop disk images read-only.
       //  If the AppleView is moved between columns or into a floating window
       //  with VSCode, the emulator instance is serialized and then recreated,
       //  losing the original file handle.  Even if the full path is still
       //  available, the webview may not have access to that path anymore.
-      const isReadOnly = true
-      return new FileDiskImage(fileName, data, isReadOnly)
+      return new FileDiskImage(fileName, data)
     }
   }
 
@@ -519,7 +520,6 @@ import { SocketDebugger } from "./debugger"
 
 // TODO: how does this get shutdown notification?
 
-// TODO: add disk images?
 export type AppleParams = {
   machine?: string
   debugPort?: number

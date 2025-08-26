@@ -230,7 +230,17 @@ class Webview {
         if (this.appleEmu && body.dataString) {
           // TODO: call appleEmu and have it do most of this instead
           const dataBytes = base64.toByteArray(body.dataString)
-          const diskImage = new FileDiskImage(body.fullPath, dataBytes, body.writeProtected)
+          const onWrite = body.writeProtected ? undefined : (newDataBytes: Uint8Array) => {
+            vscode.postMessage({
+              type: "diskWrite",
+              requestId,
+              body: {
+                fullPath: body.fullPath,
+                dataString: base64.fromByteArray(newDataBytes)
+              }
+            })
+          }
+          const diskImage = new FileDiskImage(body.fullPath, dataBytes, onWrite)
           const driveIndex = body.driveIndex ?? 0
           this.appleEmu.machine.setDiskImage(driveIndex, diskImage)
           this.appleEmu.machine.display.displayView.focus()

@@ -120,7 +120,7 @@ export class Cpu65xx implements IMachineCpu {
     this.cycles = 0
     this.pendingNMI = false
     this.pendingIRQ = false
-    this.vstack = new VirtualStack(this)
+    this.vstack.reset()
     this.fetchNextOpcode()
   }
 
@@ -209,6 +209,10 @@ export class Cpu65xx implements IMachineCpu {
 
   public getCallStack(): StackEntry[] {
     return this.vstack.getCallStack()
+  }
+
+  public enableCheckStack(enable: boolean): void {
+    this.vstack.checkStack = enable
   }
 
   // hooks
@@ -1260,7 +1264,10 @@ export class Cpu65xx implements IMachineCpu {
       this.fetchAndDiscard,
       () => {
         this.pushToStack(this.A)
-        this.vstack.PHA()
+        const error = this.vstack.PHA()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1272,7 +1279,10 @@ export class Cpu65xx implements IMachineCpu {
       this.fetchAndDiscard,
       () => {
         this.pushToStack(this.X)
-        this.vstack.PHA()
+        const error = this.vstack.PHA()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1284,7 +1294,10 @@ export class Cpu65xx implements IMachineCpu {
       this.fetchAndDiscard,
       () => {
         this.pushToStack(this.Y)
-        this.vstack.PHA()
+        const error = this.vstack.PHA()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1297,7 +1310,10 @@ export class Cpu65xx implements IMachineCpu {
       () => {
         // E and B bits always pushed as set
         this.pushToStack(this.getStatusBits() | 0x30)
-        this.vstack.PHP()
+        const error = this.vstack.PHP()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1311,7 +1327,10 @@ export class Cpu65xx implements IMachineCpu {
       () => {
         this.A = this.popFromStack()
         this.setZN(this.A)
-        this.vstack.PLA()
+        const error = this.vstack.PLA()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1325,7 +1344,10 @@ export class Cpu65xx implements IMachineCpu {
       () => {
         this.X = this.popFromStack()
         this.setZN(this.X)
-        this.vstack.PLA()
+        const error = this.vstack.PLA()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1339,7 +1361,10 @@ export class Cpu65xx implements IMachineCpu {
       () => {
         this.Y = this.popFromStack()
         this.setZN(this.Y)
-        this.vstack.PLA()
+        const error = this.vstack.PLA()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1352,7 +1377,10 @@ export class Cpu65xx implements IMachineCpu {
       this.peekFromStack,
       () => {
         this.setStatusBits(this.popFromStack())
-        this.vstack.PLP()
+        const error = this.vstack.PLP()
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
       },
       this.fetchNextOpcode
     ]
@@ -1367,7 +1395,10 @@ export class Cpu65xx implements IMachineCpu {
       () => { this.pushToStack(this.PC & 0xff) },
       this.fetchADH,
       () => {
-        this.vstack.JSR(this.AD)
+        const error = this.vstack.JSR(this.AD)
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
         this.PC = this.AD
         if (this.callHook) {
           this.callHook()
@@ -1504,7 +1535,10 @@ export class Cpu65xx implements IMachineCpu {
       () => { this.AD = this.popFromStack() },
       () => { this.AD |= this.popFromStack() << 8 },
       () => {
-        this.vstack.RTS(this.AD)
+        const error = this.vstack.RTS(this.AD)
+        if (error && this.debugHook) {
+          this.debugHook(error)
+        }
         this.PC = this.AD
         this.fetchDataFromImm()
         if (this.returnHook) {
@@ -2146,9 +2180,11 @@ export class Cpu65xx implements IMachineCpu {
 // pull is +(sp) : sp = (sp + 1) & 255, read(sp)
 
 enum Tracker {
-  Empty = -1,
-  Php = -2,
-  Pha = -3
+  Empty = 0,
+  JsrHigh = 1,
+  JsrLow = 2,
+  Php = 3,
+  Pha = 4
 }
 
 type SimpleEntry = {
@@ -2163,6 +2199,7 @@ class VirtualStack {
   private stack: SimpleEntry[] = []
   private tracker: number[] = []
   private currProc: number = -1
+  public checkStack: boolean = false
 
   constructor(cpu: Cpu65xx) {
     this.cpu = cpu
@@ -2200,103 +2237,119 @@ class VirtualStack {
     this.currProc = state.currProc
   }
 
-  private reset() {
+  public reset() {
     this.stack = []
     this.tracker = []
     this.currProc = this.cpu.getPC()
   }
 
-  public JSR(dstAddr: number) {
-    const PC = this.cpu.getPC() - 2
-    // TODO: subtract 1? 3?
-    this.tracker.push(PC >> 8)     // high
-    this.tracker.push(PC & 255)    // low
+  public JSR(dstAddr: number): string | undefined {
+
+    this.tracker.push(Tracker.JsrHigh)
+    this.tracker.push(Tracker.JsrLow)
+    if (this.tracker.length >= 256 && this.checkStack) {
+      return "Stack overflow"
+    }
 
     // calling proc, retAddr to JSR
+    const PC = this.cpu.getPC() - 2
     this.pushState(this.currProc, PC)
 
     this.currProc = dstAddr
   }
 
-  public RTS(dstAddr: number) {
-    // TODO: validation
-    //  - values turned negative, or missing from reset()
-    const high = this.tracker.pop() ?? Tracker.Empty
-    const low = this.tracker.pop() ?? Tracker.Empty
+  public RTS(dstAddr: number): string | undefined {
 
-    if (high < 0) {
-      // stack is in bad state
-      if (high == Tracker.Empty) {
-        // TODO: break and report error
-        console.log("Stack error detected on RTS")
-        this.reset()
-        return
-      }
-      // returning on PHP value
-      if (high == Tracker.Php) {
-        // TODO: break and report error
-        console.log("Bad RTS on PHP value")
-        this.reset()
-        return
-      }
-      if (low != Tracker.Pha) {
-        // TODO: break and report error
-        console.log("Bad RTS on PHA value")
-        this.reset()
-        return
-      }
-      // both low and high have been repushed,
-      //  so maybe updated stack
-      // TODO: more here?
-    } else if (low < 0) {
-      // stack is in bad state
-      if (high == Tracker.Empty) {
-        // TODO: break and report error
-        console.log("Stack error detected on RTS")
-        this.reset()
-        return
-      }
-      // returning on PHP value
-      if (high == Tracker.Php) {
-        // TODO: break and report error
-        console.log("RTS on PHP value")
-        this.reset()
-        return
-      }
-      // TODO: break and report error
-      console.log("Bad RTS on PHA value")
-      this.reset()
-      return
+    this.currProc = (dstAddr + 1) & 0xFFFF
+
+    let error: string | undefined
+    const lowX = this.tracker.pop() ?? Tracker.Empty
+    const highX = this.tracker.pop() ?? Tracker.Empty
+
+    switch (lowX) {
+      case Tracker.JsrHigh:
+        error = "Popping return address high byte into low byte"
+        break
+      case Tracker.JsrLow:
+      case Tracker.Pha:
+        break
+      case Tracker.Php:
+        error = "Popping PHP value into return address low byte"
+        break
+      case Tracker.Empty:
+        error = "Missing value to pop into return address low byte"
+        break
     }
 
-    const frame = this.stack.pop()
-    if (frame) {
-      this.currProc = frame.proc
+    switch (highX) {
+      case Tracker.JsrHigh:
+        const frame = this.stack.pop()
+        if (frame) {
+          this.currProc = frame.proc
+        }
+        break
+      case Tracker.JsrLow:
+        if (!error) {
+          error = "Popping return address low byte into high byte"
+        }
+        break
+      case Tracker.Pha:
+        break
+      case Tracker.Php:
+        if (!error) {
+          error = "Popping PHP value into return address high byte"
+        }
+        break
+      case Tracker.Empty:
+        if (!error) {
+          error = "Missing value to pop into return address high byte"
+        }
+        break
     }
+
+    if (error) {
+      error = "Stack error: " + error + ` (RTS at $${this.cpu.getPC().toString(16).padStart(4, "0")})`
+    }
+    return this.checkStack ? error : undefined
   }
 
-  public PHA() {
+  public PHA(): string | undefined {
     this.tracker.push(Tracker.Pha)
-  }
-
-  public PHP() {
-    this.tracker.push(Tracker.Php)
-  }
-
-  public PLA() {
-    const value = this.tracker.pop()
-    if (value != Tracker.Php && value != Tracker.Pha) {
-      // TODO: popping return value -- correct vstack
+    if (this.tracker.length >= 256 && this.checkStack) {
+      return "Stack overflow"
     }
   }
 
-  public PLP() {
-    const value = this.tracker.pop()
-    if (value != Tracker.Php && value != Tracker.Pha) {
-      // TODO: break and report error
-      console.log("PLP on return address")
-      this.reset()
-      return
+  public PHP(): string | undefined {
+    this.tracker.push(Tracker.Php)
+    if (this.tracker.length >= 256 && this.checkStack) {
+      return "Stack overflow"
+    }
+  }
+
+  public PLA(): string | undefined {
+    const value = this.tracker.pop() ?? Tracker.Empty
+    if (value == Tracker.JsrHigh) {
+      this.stack.pop()
+    } else if (value == Tracker.Empty && this.checkStack) {
+      return "Stack underflow"
+    }
+  }
+
+  public PLP(): string | undefined {
+    const value = this.tracker.pop() ?? Tracker.Empty
+    if (value == Tracker.JsrHigh) {
+      const frame = this.stack.pop()
+      if (frame) {
+        this.currProc = frame.proc
+      }
+      if (this.checkStack) {
+        return "Stack error: PLP on return address high byte"
+      }
+    } else if (value == Tracker.JsrLow && this.checkStack) {
+      return "Stack error: PLP on return address low byte"
+    } else if (value == Tracker.Empty && this.checkStack) {
+      return "Stack underflow"
     }
   }
 
@@ -2312,6 +2365,7 @@ class VirtualStack {
   }
 
   public RTI(dstAddr: number) {
+    // dstAddr = (dstAddr + 1) & 0xFFFF
   }
 
   public TXS() {

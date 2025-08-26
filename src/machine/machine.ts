@@ -30,9 +30,9 @@ export enum Apple {
 
 //------------------------------------------------------------------------------
 
-function uint8ToBase64(uint8: Uint8Array): Promise<string> {
+async function base64FromUint8(uint8: Uint8Array): Promise<string> {
   return new Promise((resolve, reject) => {
-    const blob = new Blob([uint8])
+    const blob = new Blob([uint8.buffer as ArrayBuffer])
     const reader = new FileReader()
     reader.onloadend = () => {
       const dataUrl = <string>reader.result
@@ -47,41 +47,38 @@ function uint8ToBase64(uint8: Uint8Array): Promise<string> {
 
 //------------------------------------------------------------------------------
 
-// TODO: handle a modified disk image getting replaced
-//  (close old image before opening new one)
-
-// *** rename FileDiskImage to AppleDiskImage? ***
-
 export class FileDiskImage extends DiskImage {
 
-  public fileName: string
+  private nibbleData: Uint8Array
+  private isDirty: boolean
 
   constructor(
-      fileName: string,
-      data: Uint8Array,
-      isReadOnly = false) {
+      public fileName: string,
+      dataBytes: Uint8Array,
+      private onWrite?: (dataBytes: Uint8Array) => void) {
     const n = fileName.lastIndexOf(".")
     const suffix = n > 0 ? fileName.substring(n + 1).toLowerCase() : ""
-    super(suffix, data, isReadOnly)
-    this.fileName = fileName
+    super(suffix, dataBytes, onWrite == undefined)
+
+    this.nibbleData = this.nibblize()
+    this.isDirty = false
   }
 
-  public static fromState(state: any): FileDiskImage {
-    let dataBytes: Uint8Array
+  public setStateDiskImage(state: any) {
     if (state.dataString) {
-      dataBytes = base64.toByteArray(state.dataString)
+      this.fullData = base64.toByteArray(state.dataString)
     } else {
-      dataBytes = new Uint8Array(state.dataBytes)
+      this.fullData = new Uint8Array(state.dataBytes)
     }
-    const diskImage = new FileDiskImage(
-      state.fileName,
-      dataBytes,
-      state.writeProtected
-    )
-    return diskImage
+    this.isReadOnly = state.writeProtected
+    this.nibbleData = this.nibblize()
+    this.isDirty = false
   }
 
   public getStateDiskImage(): any {
+    // NOTE: don't call commitChanges here in order
+    //  to avoid committing a partial write back
+    //  to the disk image
     let state: any = {}
     state.fileName = this.fileName
     state.dataBytes = new Uint8Array(this.fullData)
@@ -91,19 +88,30 @@ export class FileDiskImage extends DiskImage {
 
   public async flattenState(state: any) {
     if (state.dataBytes) {
-      // state.dataString = base64.fromByteArray(state.dataBytes)
-      state.dataString = await uint8ToBase64(state.dataBytes)
+      state.dataString = await base64FromUint8(state.dataBytes)
       delete state.dataBytes
     }
   }
 
+  public readNibbleData(offset: number): number {
+    return this.nibbleData[offset]
+  }
+
+  public writeNibbleData(offset: number, data: number) {
+    this.nibbleData[offset] = data
+    this.isDirty = true
+  }
+
   public override commitChanges() {
-    if (this.workingData) {
+    if (this.isDirty && !this.isReadOnly) {
+      this.denibblize(this.nibbleData)
       super.commitChanges()
-      if (!this.isReadOnly) {
-        // fs.writeFileSync(this.path, this.fullData)
-        // TODO: or directly to file handle?
+      if (this.onWrite) {
+        this.onWrite(this.fullData)
       }
+      this.isDirty = false
+    } else {
+      super.commitChanges()
     }
   }
 }
@@ -125,7 +133,7 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
 
   private type: Apple
   private _clock: Clock
-  public _cpu: Cpu65xx    // TODO: fix public access for RegisterView
+  private _cpu: Cpu65xx
   private isa6502: Isa6502    // TODO: get rid of
   private slots: IMachineDevice[]
 
@@ -169,10 +177,10 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
   private curStateIndex: number = 0
   private states: any[] = []
 
-  // *** require a type?
-  constructor(type?: Apple) {
+  // TODO: require a type?
+  constructor(type: Apple = Apple.IIe) {
 
-    this.type = type ?? Apple.IIe
+    this.type = type
     this.ram = new Uint8Array(0x10000 * 2).fill(0xEE)
     this.rom = new Uint8Array(0x4000).fill(0xEE) // 0xC000 - 0xFFFF
 
@@ -228,11 +236,9 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
   //--------------------------------------------------------
 
   public snapState(frameNumber: number) {
-    console.time("snapState")
     this.trimStates()
     this.states.push(this.getState())
     this.curStateIndex += 1
-    console.timeEnd("snapState")
   }
 
   public getStateInfo() {
@@ -250,6 +256,11 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
       this.states.shift()
       this.curStateIndex -= 1
     }
+  }
+
+  private clearStates() {
+    this.states = []
+    this.curStateIndex = 0
   }
 
   public advanceState(forward: boolean, toEnd: boolean): boolean {
@@ -327,8 +338,7 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
 
   public async flattenState(state: any) {
     if (state.ramBytes) {
-      // state.ramString = base64.fromByteArray(state.ramBytes)
-      state.ramString = await uint8ToBase64(state.ramBytes)
+      state.ramString = await base64FromUint8(state.ramBytes)
       delete state.ramBytes
     }
     await this._cpu.flattenState(state.cpu)
@@ -423,10 +433,10 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
       this.ram.fill(0xA0, 0x0400, 0x07ff)
     }
 
-    this.display.reset()
-    this.speaker.reset()
+    this.display.reset(hardReset)
+    this.speaker.reset(hardReset)
     for (let i = 0; i < this.slots.length; i += 1) {
-      this.slots[i]?.reset()
+      this.slots[i]?.reset(hardReset)
     }
 
     this.cpu.reset()
@@ -606,6 +616,10 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
     } else {
       this.ram.set(data, address)
     }
+  }
+
+  public readRam(address: number, length: number): Uint8Array {
+    return this.ram.slice(address, address + length)
   }
 
   public writeRam(address: number, data: Uint8Array | number[]) {
@@ -1031,6 +1045,7 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
   }
 
   setDiskImage(driveIndex: number, image: FileDiskImage | undefined) {
+    this.clearStates()
     this.disk2Card.setImage(driveIndex, image)
   }
 
@@ -1094,7 +1109,7 @@ class DisplayGenerator {
     this.isInVBlank = undefined
   }
 
-  public reset() {
+  public reset(hardReset: boolean) {
     this.frameNumber = 0
     this.frameStartCycle = 0
     this.isInVBlank = undefined
@@ -1160,7 +1175,7 @@ class SpeakerDevice {
   public setState(state: any) {
   }
 
-  public reset() {
+  public reset(hardReset: boolean) {
     this.inSamples.fill(0)
     this.outSamples.fill(0)
     this.inPhase = 0
@@ -1192,7 +1207,7 @@ class SpeakerDevice {
           this.inSamples = new Array(this.inSampleWindow + CyclesPerFrame)
           this.outSamples = new Array(Math.floor(this.audioCtx.sampleRate / FramesPerSecond))
         }
-        this.reset()
+        this.reset(false)
         this.audioCtx.resume()
       } else {
         this.audioCtx!.suspend()
@@ -1299,7 +1314,6 @@ const SPIN_DOWN_CYCLES = 1000 * 1000
 
 class Disk2Drive {
   private diskImage?: FileDiskImage
-  private nibbleData?: Uint8Array
   public isWriteProtected = false
   private phase = 0
   private trackOffset = 0
@@ -1309,16 +1323,13 @@ class Disk2Drive {
   public isSpinning = false
 
   constructor() {
-    this.reset()
+    this.reset(true)
   }
 
   public getStateDisk2Drive(): any {
     let state: any = {}
     if (this.diskImage) {
       state.diskImage = this.diskImage.getStateDiskImage()
-      if (this.nibbleData) {
-        state.nibbleBytes = new Uint8Array(this.nibbleData)
-      }
       state.isWriteProtected = this.isWriteProtected
       state.phase = this.phase
       state.trackOffset = this.trackOffset
@@ -1334,8 +1345,7 @@ class Disk2Drive {
     if (state.diskImage) {
       await this.diskImage?.flattenState(state.diskImage)
       if (state.nibbleBytes) {
-        // state.nibbleString = base64.fromByteArray(state.nibbleBytes)
-        state.nibbleString = await uint8ToBase64(state.nibbleBytes)
+        state.nibbleString = await base64FromUint8(state.nibbleBytes)
         delete state.nibbleBytes
       }
     }
@@ -1343,12 +1353,7 @@ class Disk2Drive {
 
   public setState(state: any) {
     if (state.diskImage) {
-      this.diskImage = FileDiskImage.fromState(state.diskImage)
-      if (state.nibbleString) {
-        this.nibbleData = base64.toByteArray(state.nibbleString)
-      } else if (state.nibbleBytes) {
-        this.nibbleData = new Uint8Array(state.nibbleBytes)
-      }
+      this.diskImage?.setStateDiskImage(state.diskImage)
       this.isWriteProtected = state.isWriteProtected
       this.phase = state.phase
       this.trackOffset = state.trackOffset
@@ -1361,14 +1366,16 @@ class Disk2Drive {
     }
   }
 
-  public reset() {
-    this.isWriteProtected = false
+  public reset(hardReset: boolean) {
     this.phase = 0
     this.trackOffset = 0
     this.byteIndex = 0
     this.motorOnCycle = 0
     this.motorOffCycle = 0
     this.isSpinning = false
+    if (hardReset) {
+      this.diskImage = undefined
+    }
   }
 
   public enable(enable: boolean, cycleCount: number) {
@@ -1376,6 +1383,7 @@ class Disk2Drive {
       this.motorOnCycle = 0
       this.motorOffCycle = 0
       this.isSpinning = false
+      this.diskImage?.commitChanges()
     }
   }
 
@@ -1398,6 +1406,7 @@ class Disk2Drive {
   }
 
   public updateSpinning(cycleCount: number): boolean {
+    const wasSpinning = this.isSpinning
     if (this.motorOnCycle) {
       this.isSpinning = cycleCount - this.motorOnCycle >= SPIN_UP_CYCLES
     } else if (this.motorOffCycle) {
@@ -1405,13 +1414,27 @@ class Disk2Drive {
     } else {
       this.isSpinning = false
     }
+
+    // writeback to disk file when spinning stops
+    if (wasSpinning && !this.isSpinning) {
+      this.diskImage?.commitChanges()
+    }
     return this.isSpinning
   }
 
   public setImage(diskImage?: FileDiskImage) {
+    // if the new image is the same as the old one,
+    //  ignore set in order to avoid problem where
+    //  the new image was read from a file before old
+    //  image could write back to it
+    if (this.diskImage && diskImage) {
+      if (this.diskImage.fileName == diskImage.fileName) {
+        return
+      }
+    }
+
     this.diskImage = diskImage
-    this.nibbleData = diskImage?.nibblize()
-    this.isWriteProtected = diskImage?.isReadOnly || true
+    this.isWriteProtected = diskImage?.isReadOnly ?? true
   }
 
   public getImage(): FileDiskImage | undefined {
@@ -1419,8 +1442,8 @@ class Disk2Drive {
   }
 
   public getNextDataByte(): number {
-    if (this.nibbleData) {
-      const value = this.nibbleData[this.trackOffset + this.byteIndex]
+    if (this.diskImage) {
+      const value = this.diskImage.readNibbleData(this.trackOffset + this.byteIndex)
       this.byteIndex += 1
       if (this.byteIndex == NIB_TRACK_SIZE) {
         this.byteIndex = 0
@@ -1431,8 +1454,8 @@ class Disk2Drive {
   }
 
   public setNextDataByte(data: number) {
-    if (this.nibbleData) {
-      this.nibbleData[this.trackOffset + this.byteIndex] = data
+    if (this.diskImage) {
+      this.diskImage.writeNibbleData(this.trackOffset + this.byteIndex, data)
       this.byteIndex += 1
       if (this.byteIndex == NIB_TRACK_SIZE) {
         this.byteIndex = 0
@@ -1466,7 +1489,7 @@ class Disk2Card implements IMachineDevice {
 
   constructor() {
     this.drives = [ new Disk2Drive(), new Disk2Drive() ]
-    this.reset()
+    this.reset(true)
   }
 
   public getStateDisk2Card(): any {
@@ -1528,9 +1551,9 @@ class Disk2Card implements IMachineDevice {
 
   // IMachineDevice interface implementation
 
-  public reset() {
+  public reset(hardReset: boolean) {
     for (let i = 0; i < 2; i += 1) {
-      this.drives[i].reset()
+      this.drives[i].reset(hardReset)
       this.notifyListener(i)
     }
     this.currentDrive = 0

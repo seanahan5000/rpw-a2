@@ -570,7 +570,7 @@ export class EmulatorPanel {
         "rpwa2.EMU",
         // TODO: more later
         machine == "iip" ? "Apple ][+" : "Apple IIe",
-        vscode.ViewColumn.Beside,
+        vscode.ViewColumn.Two,
         {
           enableScripts: true,
           retainContextWhenHidden: true,
@@ -615,8 +615,10 @@ export class EmulatorPanel {
         }
       } else if (e.type == "driveClick") {
         this.onDriveClick(e.driveIndex ?? 0)
+      } else if (e.type == "diskWrite") {
+        this.onDiskWrite(e.body.fullPath, e.body.dataString)
       } else if (e.type == "snapshot") {
-        // *** capture screen and edit? ***
+        // TODO: capture screen and edit?
       }
     })
   }
@@ -639,6 +641,12 @@ export class EmulatorPanel {
         writeProtected: false
       }})
     }
+  }
+
+  private async onDiskWrite(fullPath: string, dataString: string) {
+    const uri = vscode.Uri.file(fullPath)
+    const dataBytes = base64.toByteArray(dataString)
+    await vscode.workspace.fs.writeFile(uri, dataBytes)
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string{

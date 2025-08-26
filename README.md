@@ -18,7 +18,7 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 ##### Known Problems
 
 * Mixed text and grqphics mode not supported
-* Disk writing not supported
+* Flashing text not supported
 * Mockingboard support is very limited for now
 
 #### Debugging with RPW 65 Extension
@@ -26,8 +26,8 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 <img src="images/rpwa2-dbg.png"/>
 
 See these projects for example configurations:
-https://github.com/seanahan5000/kaboom
-https://github.com/seanahan5000/applz
+* https://github.com/seanahan5000/kaboom
+* https://github.com/seanahan5000/applz
 
 #### Graphics Editor
 
@@ -46,8 +46,8 @@ Copying a graphics selection puts that data on the clipboard in text form, ready
 * Mounts .dsk, .do, .po, .2mg, and .hdv images (.nib and .woz not supported)
 * Supports file and folder move, copy, create, delete, and rename
 * Displays file contents as text, hex, 6502 disassembly, or graphics (HIRES, LORES, Double HIRES, Double LORES)
-* Automatically detokenizes Applesoft and Integer BASIC files to text
-* Automatically converts Merlin and LISA v2 source files to text
+* Detokenizes Applesoft and Integer BASIC files to text
+* Converts Merlin and LISA v2 source files to text
 
 ##### NOTES
 
@@ -57,7 +57,7 @@ All write operations are treated as transactions.  The volume is verified before
 
 This extension has been tested by opening and verifying most images in the Asimov archive.  It will refuse to open any image with any questionable or unknown formatting.  This conservative approach could be relaxed in the future if necessary.
 
-The file conversion functionality in RPW A2 is enough to access old code and graphics, but is not intendend as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like Ciderpress.
+The file conversion functionality in RPW A2 is enough to access old code and graphics, but is not intendend as a general-purpose file export and conversion tool.  For more complete conversion functionality, see tools like CiderPress.
 
 ##### Known Problems
 

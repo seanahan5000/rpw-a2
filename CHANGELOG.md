@@ -1,5 +1,19 @@
 # RPW A2 Changelog
 
+### [3.0.2] - 2025-08-26
+
+#### Added:
+* Emulator: Disk image writeback support
+* Debugger: Improved detection and messaging of stack errors
+
+#### Changed:
+* Emulator: Open in column two rather than beside the active document
+
+#### Fixed:
+* Debugger: Virtual stack tracking over PLA/PHA
+* Paint: Cursor stays visible after show/hide in emulator
+* Paint: Selection pasted twice (due to differences with Chrome)
+
 ### [3.0.1] - 2025-08-05
 
 #### Added:

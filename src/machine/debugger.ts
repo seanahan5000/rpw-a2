@@ -10,7 +10,7 @@ import { Machine, FileDiskImage } from "./machine"
 
 // NOTE: duplicated in lsp_debugger.ts
 
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 type RequestHeader = {
   command: string
@@ -44,6 +44,7 @@ type StopNotification = RequestHeader & {
   pc: number
   dataAddress?: number
   dataString?: string
+  error?: string
 }
 
 type SetRegisterRequest = RequestHeader & StackRegister
@@ -71,6 +72,16 @@ type ReadMemoryResponse = RequestHeader & {
   dataString: string    // actual data read in base64, possibly < readLength
 }
 
+type ReadRamRequest = RequestHeader & {
+  dataAddress: number   // read address
+  dataLength: number    // number of bytes to read
+}
+
+type ReadRamResponse = RequestHeader & {
+  dataAddress: number   // effective read address
+  dataString: string    // actual data read in base64
+}
+
 type WriteMemoryRequest = RequestHeader & {
   dataAddress: number     // direct write address
   dataBank?: number       // optional bank 0, 1, or 2
@@ -94,6 +105,16 @@ type SetDiskImageRequest = RequestHeader & {
   writeProtected: boolean
 }
 
+type DiskWriteNotification = RequestHeader & {
+  fullPath: string
+  dataString: string    // disk contents in base64
+}
+
+type SetParameterRequest = RequestHeader & {
+  name: string,
+  value: number
+}
+
 //------------------------------------------------------------------------------
 
 export class SocketDebugger {
@@ -112,6 +133,7 @@ export class SocketDebugger {
     this.machine = machine
     this.machine.clock.on("start", () => { this.onStart() })
     this.machine.clock.on("stop", (reason: string) => { this.onStop(reason) })
+    this.machine.clock.on("error", (error: string) => { this.onError(error) })
   }
 
   private startSocket(port: number = 6502) {
@@ -228,6 +250,18 @@ export class SocketDebugger {
         break
       }
 
+      case "setParameter": {
+        const req = <SetParameterRequest>request
+        let error: string | undefined
+        if (req.name == "checkStack") {
+          this.machine.cpu.enableCheckStack(req.value != 0)
+        } else {
+          error = `Unknown parameter "${req.name}"`
+        }
+        this.sendAcknowledge(request, error)
+        break
+      }
+
       case "readOpMemory": {
         const response = this.onReadOpMemory(<ReadOpMemoryRequest>request)
         this.sendResponse(request, response)
@@ -236,6 +270,12 @@ export class SocketDebugger {
 
       case "readMemory": {
         const response = this.onReadMemory(<ReadMemoryRequest>request)
+        this.sendResponse(request, response)
+        break
+      }
+
+      case "readRam": {
+        const response = this.onReadRam(<ReadRamRequest>request)
         this.sendResponse(request, response)
         break
       }
@@ -262,10 +302,6 @@ export class SocketDebugger {
         this.sendAcknowledge(request, "Unsupported request")
         break
       }
-
-      // TODO: other message commands
-      // "readRegisters"
-      // "writeRegisters"
     }
   }
 
@@ -301,6 +337,29 @@ export class SocketDebugger {
         pc: this.machine.cpu.getPC()
       }
       this.applyData(response, response.pc - this.dataRangeSize / 2, this.dataRangeSize)
+      this.socket.send(JSON.stringify(response))
+    }
+  }
+
+  protected onError(error: string) {
+    if (this.socket && this.socket.readyState == WebSocket.OPEN) {
+      const response: StopNotification = {
+        command: "cpuStopped",
+        reason: "error",
+        pc: this.machine.cpu.getPC(),
+        error: error
+      }
+      this.socket.send(JSON.stringify(response))
+    }
+  }
+
+  protected onDiskWrite(fullPath: string, dataBytes: Uint8Array) {
+    if (this.socket && this.socket.readyState == WebSocket.OPEN) {
+      const response: DiskWriteNotification = {
+        command: "diskWrite",
+        fullPath,
+        dataString: base64.fromByteArray(dataBytes)
+      }
       this.socket.send(JSON.stringify(response))
     }
   }
@@ -389,6 +448,16 @@ export class SocketDebugger {
     return response
   }
 
+  private onReadRam(request: ReadRamRequest): ReadRamResponse {
+    const memory = this.machine.memory.readRam(request.dataAddress, request.dataLength)
+    const response: ReadRamResponse = {
+      command: request.command,
+      dataAddress: request.dataAddress,
+      dataString: base64.fromByteArray(memory)
+    }
+    return response
+  }
+
   // TODO: eventually need to figure out multiple banks
   //  (maybe look for 24-bit addresses?)
   private onWriteMemory(request: WriteMemoryRequest): WriteMemoryResponse {
@@ -410,7 +479,7 @@ export class SocketDebugger {
       this.machine.memory.write(address + i, data[i], cycleCount)
     }
 
-    // *** return offset to start of write, if partial ***
+    // TODO: return offset to start of write, if partial
 
     const response: WriteMemoryResponse = {
       command: request.command,
@@ -428,10 +497,14 @@ export class SocketDebugger {
     let diskImage: FileDiskImage | undefined
 
     if (request.fullPath) {
+      const onWrite = request.writeProtected ? undefined : (dataBytes: Uint8Array) => {
+        this.onDiskWrite(request.fullPath!, dataBytes)
+      }
       diskImage = new FileDiskImage(
         request.fullPath,
         base64.toByteArray(request.dataString),
-        request.writeProtected)
+        onWrite
+      )
     }
 
     // TODO: add to interface? find device?

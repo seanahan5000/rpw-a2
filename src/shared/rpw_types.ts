@@ -16,7 +16,6 @@ export const RpwSettingsDefaults = {
 
 export type RpwModule = {
   src?: string
-  lst?: string
   dis65?: string
 }
 
@@ -51,6 +50,7 @@ export type RpwProject = {
   projectName?: string          // default: <name>.rpw-project
   srcDir?: string
   binDir?: string
+  imgDir?: string
   includes?: string[]
   modules?: RpwModule[]
   images?: RpwImage []

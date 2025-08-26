@@ -47,8 +47,11 @@ export class Clock implements IClock {
   constructor(machine: IMachine, clockRate: number, frameRate: number) {
     this.machine = machine
 
-    this.machine.cpu.on("debug", () => {
+    this.machine.cpu.on("debug", (error?: string) => {
       this.stopRequested = true
+      if (error) {
+        this.emit("error", error)
+      }
     })
 
     this.machine.cpu.on("call", () => {

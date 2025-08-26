@@ -151,32 +151,36 @@ export class DisplayView {
       screenTabs.style.marginTop = "4px"
     }
 
-    // Chrome doesn't support oncopy/onpaste of canvas elements
-    //  so manually redirect here
+    // TODO: pass this flag in based on host environment
+    const inChrome = false
+    if (inChrome) {
+      // Chrome doesn't support oncopy/onpaste of canvas elements
+      //  so manually redirect here
 
-    document.oncut = (e: ClipboardEvent) => {
-      if (document.activeElement) {
-        let element: HTMLElement = document.activeElement as HTMLElement
-        if (element && element.oncut) {
-          element.oncut(e)
+      document.oncut = (e: ClipboardEvent) => {
+        if (document.activeElement) {
+          let element: HTMLElement = document.activeElement as HTMLElement
+          if (element && element.oncut) {
+            element.oncut(e)
+          }
         }
       }
-    }
 
-    document.oncopy = (e: ClipboardEvent) => {
-      if (document.activeElement) {
-        let element: HTMLElement = document.activeElement as HTMLElement
-        if (element && element.oncopy) {
-          element.oncopy(e)
+      document.oncopy = (e: ClipboardEvent) => {
+        if (document.activeElement) {
+          let element: HTMLElement = document.activeElement as HTMLElement
+          if (element && element.oncopy) {
+            element.oncopy(e)
+          }
         }
       }
-    }
 
-    document.onpaste = (e: ClipboardEvent) => {
-      if (document.activeElement) {
-        let element: HTMLElement = document.activeElement as HTMLElement
-        if (element && element.onpaste) {
-          element.onpaste(e)
+      document.onpaste = (e: ClipboardEvent) => {
+        if (document.activeElement) {
+          let element: HTMLElement = document.activeElement as HTMLElement
+          if (element && element.onpaste) {
+            element.onpaste(e)
+          }
         }
       }
     }
@@ -225,7 +229,11 @@ export class DisplayView {
       cursor = Cursor.None
     }
     if (cursor === undefined) {
-      cursor = this.paintDisplay.chooseCursor(this.mousePt!, modifierKeys)
+      if (this.isEditing) {
+        cursor = this.paintDisplay.chooseCursor(this.mousePt!, modifierKeys)
+      } else {
+        cursor = Cursor.None
+      }
     }
     if (cursor == Cursor.None) {
       this.cursorDiv.style.display = "none"
@@ -916,21 +924,24 @@ export class DisplayView {
           if (!this.hostHooks) {
             this.paintDisplay.cutSelection(getModifierKeys(e))
             e.preventDefault()
+            e.stopPropagation()
           }
         } else if (curKey == "c") {
           if (!this.hostHooks) {
             this.paintDisplay.copySelection(getModifierKeys(e))
             e.preventDefault()
+            e.stopPropagation()
           }
         } else if (curKey == "v") {
           if (!this.hostHooks) {
             navigator.clipboard.readText().then(clipText => {
               if (this.isEditing) {
                 this.paintDisplay.pasteSelection(clipText, this.mousePt)
+                e.preventDefault()
+                e.stopPropagation()
               }
             })
           }
-          e.preventDefault()
         } else if (curKey === "a") {
           // NOTE: do this even if hostHooks is present
           this.paintDisplay.selectAll(e.ctrlKey)

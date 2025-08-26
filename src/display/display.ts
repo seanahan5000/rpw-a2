@@ -1084,10 +1084,7 @@ export class PaintDisplay extends ZoomDisplay {
 
     if (fullCapture) {
       this.undoCurrentIndex += 1
-
-      if (this.hostHooks) {
-        this.hostHooks.capturedUndo(this.undoCurrentIndex)
-      }
+      this.hostHooks?.capturedUndo(this.undoCurrentIndex)
     }
   }
 

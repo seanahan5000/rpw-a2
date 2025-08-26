@@ -60,7 +60,7 @@ const webConfig = {
         path: path.resolve(__dirname, 'out'),
         filename: 'webview.js'
     },
-    devtool: 'source-map',
+    devtool: 'inline-source-map',
     resolve: {
         extensions: ['.ts', '.js']
     },

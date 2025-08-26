@@ -553,8 +553,12 @@ export class DiskImage {
         throw new Error(`Denibblize error: Expected track ${track}, got ${strack}`)
       }
 
-      // TODO: DOS doesn't check if 0xEB is valid here
-      offset = this.expectValues([0xDE, 0xAA, 0xEB], trackData, offset)
+      offset = this.expectValues([0xDE, 0xAA/*,0xEB*/], trackData, offset)
+      // skip 0xEB byte of footer since DOS doesn't check it
+      // TODO: This may reflect a problem in emulated disk writing.
+      //  A .dsk file with correct footers gets altered by a
+      //  simple SAVE operation.
+      offset += 1
 
       while (offset < trackData.length) {
         const value = trackData[offset]
