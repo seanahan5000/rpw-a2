@@ -172,7 +172,7 @@ class Webview {
           this.appleEmu = new AppleEmulator(topDiv, params, (index: number) => {
             if (index == AppleIcon.Drive0 || index == AppleIcon.Drive1) {
               vscode.postMessage({ type: "driveClick", driveIndex: index })
-            } else if (index == AppleIcon.Snapshot) {
+            } else if (index == AppleIcon.Paint) {
               // TODO: capture the data here? in AppleView?
               vscode.postMessage({ type: "snapshot" })
             }

@@ -1,5 +1,22 @@
 # RPW A2 Changelog
 
+### [3.0.3] - 2025-09-16
+
+#### Added:
+* Emulator: Snapshot display as .png file
+* Emulator: Force reboot of machine only if shift key pressed on button click, else reset
+* Paint: Shift-n to toggle modified coordinate info display and alternate font
+
+#### Changed:
+* Emulator: Make screen display selection a pop-up menu
+* Emulator: Capture state every second instead of every 60th
+* Paint: Disable paint mode on hard reset
+
+#### Fixed:
+* Debugger: Edit register and jump to cursor now update state correctly
+* Paint: Pass modifiers to cut/copy/paste so shift-commands work
+* Paint: Cut/copy/paste keyboard shortcuts in mounted disk image editing
+
 ### [3.0.2] - 2025-08-26
 
 #### Added:

@@ -235,6 +235,16 @@ export class ScreenDisplay {
       ctx?.putImageData(this.displayData, 0, 0)
     }
   }
+
+  public takeSnapshot(): Promise<Blob> {
+    const imageData = this.displayData!
+    const c = document.createElement('canvas')
+    c.width = imageData.width
+    c.height = imageData.height
+    const ctx = c.getContext('2d')!
+    ctx.putImageData(imageData, 0, 0)
+    return new Promise((resolve, reject) => c.toBlob(b => b ? resolve(b) : reject(), 'image/png'))
+  }
 }
 
 //#endregion
@@ -864,6 +874,8 @@ export class PaintDisplay extends ZoomDisplay {
   private hostHooks?: IHostHooks
 
   private scrollTimerId?: NodeJS.Timeout
+
+  public isGame: boolean = false
 
   private useTransparent = false
 
@@ -1738,7 +1750,7 @@ export class PaintDisplay extends ZoomDisplay {
         this.captureUndo()
 
         this.editText = ""
-        this.editFont = Font.create((modifiers & ModifierKeys.SHIFT) ? "naja" : "a2e")
+        this.editFont = Font.create(this.isGame ? "naja" : "a2e")
         const charRect = {
           x: this.frameStartPt.x,
           y: this.frameStartPt.y - this.editFont.charSize.height,

@@ -1,7 +1,5 @@
 import { Machine, Apple, FileDiskImage } from "./machine"
 import { DisplayView, DisplaySource } from "../display/display_view"
-// import "./apple_view.css"
-// import "../display/display_view.css"
 
 const DriveImages: string[] = [
   require("../../media/icon-drive-off-empty.svg"),
@@ -15,7 +13,7 @@ const IconImages: string[] = [
   require("../../media/icon-reboot.svg"),
   require("../../media/icon-speaker-off.svg"),
   require("../../media/icon-speaker-on.svg"),
-  // require("../../media/icon-screenshot.svg"),
+  require("../../media/icon-screenshot.svg"),
   require("../../media/icon-paint.svg"),
   require("../../media/icon-pause.svg"),
   require("../../media/icon-resume.svg"),
@@ -39,9 +37,10 @@ export enum AppleIcon {
   Pause = 3,
   Sound  = 4,
   Screen = 5,
-  Snapshot = 6,
-  Previous = 7,
-  Next = 8
+  Paint = 6,
+  Snapshot = 7,
+  Previous = 8,
+  Next = 9
 }
 
 type Icon = {
@@ -68,7 +67,53 @@ export class AppleView {
     this.topDiv.classList.add("apple-div")
     parent.appendChild(this.topDiv)
 
-    for (let i = 0; i < 9; i += 1) {
+    // build screens menu
+
+    const helpTexts = [
+      "Show visible page",
+      "Show written-to page",
+      "Show primary page",
+      "Show secondary page"
+    ]
+
+    const screensDiv = <HTMLDivElement>document.createElement("div")
+    screensDiv.classList.add("screens-div")
+    for (let i = 0; i < 4; i += 1) {
+
+      const iconHelp = document.createElement("div")
+      iconHelp.classList.add("screen-help")
+      iconHelp.textContent = helpTexts[i]
+
+      const iconDiv = <HTMLDivElement>document.createElement("div")
+      iconDiv.classList.add("screen-icon")
+      screensDiv.appendChild(iconDiv)
+
+      iconDiv.addEventListener("mousedown", (e: MouseEvent) => {
+        e.preventDefault()
+        displayView.setDisplaySource(i)
+        screensDiv.style.display = "none"
+        displayView.focus()
+      })
+
+      iconDiv.addEventListener("pointerenter", () => {
+        iconDiv.classList.add("hilite")
+      })
+
+      iconDiv.addEventListener("pointerleave", () => {
+        iconDiv.classList.remove("hilite")
+      })
+
+      const iconImage = <HTMLImageElement>document.createElement("img")
+      iconImage.src = ScreenIconImages[i]
+      iconDiv.appendChild(iconImage)
+
+      iconDiv.appendChild(iconHelp)
+      this.setHoverElement(iconDiv, iconHelp)
+    }
+
+    // build icons panel
+
+    for (let i = 0; i < 10; i += 1) {
       const iconDiv = <HTMLDivElement>document.createElement("div")
       iconDiv.classList.add("apple-icon")
       iconDiv.id = i.toString()
@@ -153,6 +198,10 @@ export class AppleView {
 
         icon.page = iconPage
 
+        iconDiv.addEventListener("pointerenter", () => {
+          screensDiv.style.display = "none"
+        })
+
         switch (i) {
           case AppleIcon.Reboot:
             iconDiv.classList.add("apple-reboot")
@@ -160,17 +209,19 @@ export class AppleView {
               // NOTE: preventDefault here and below prevent focus change
               e.preventDefault()
               this.machine.reset(false)
-              // force reboot
               // TODO: option to reset project instead?
-              this.machine.write(0x3f3, 0, 0)
-              this.machine.write(0x3f4, 0, 0)
+              if (e.shiftKey) {
+                // force reboot
+                this.machine.write(0x3f3, 0, 0)
+                this.machine.write(0x3f4, 0, 0)
+              }
               if (!e.ctrlKey) {
                 this.machine.clock.start()
               }
               displayView.focus()
             })
             iconImage.src = IconImages[0]
-            iconHelp.innerHTML = "Reboot" //"<br>(Use control key to stop CPU)"
+            iconHelp.innerHTML = "Reset machine<br>Shift key to force reboot<br>Control key to stop CPU"
             break
 
           case AppleIcon.Sound:
@@ -188,7 +239,7 @@ export class AppleView {
             iconDiv.classList.add("apple-screen")
             iconDiv.addEventListener("mousedown", (e: MouseEvent) => {
               e.preventDefault()
-              displayView.nextDisplaySource(e.shiftKey)
+              screensDiv.style.display = "block"
               displayView.focus()
             })
             displayView.setSourceListener((source: DisplaySource, isPaged: boolean, pageIndex: number) => {
@@ -198,6 +249,24 @@ export class AppleView {
             break
 
           case AppleIcon.Snapshot:
+            iconDiv.addEventListener("mousedown", async (e: MouseEvent) => {
+              e.preventDefault()
+
+              const pngBlob = await displayView.takeSnapshot()
+              const pngUrl = URL.createObjectURL(pngBlob)
+              const a = document.createElement('a')
+              a.href = pngUrl
+              a.download = "screenshot.png"
+              a.click()
+              setTimeout(() => URL.revokeObjectURL(pngUrl), 1500)
+
+              displayView.focus()
+            })
+            iconImage.src = IconImages[3]
+            iconHelp.textContent = "Snapshot display as .png"
+            break
+
+          case AppleIcon.Paint:
             iconDiv.addEventListener("mousedown", (e: MouseEvent) => {
               e.preventDefault()
               // TODO: call clickHook for snapshot instead?
@@ -209,7 +278,7 @@ export class AppleView {
               // }
               displayView.focus()
             })
-            iconImage.src = IconImages[3]
+            iconImage.src = IconImages[4]
             // iconHelp.textContent = "Snapshot screen for editing"
             iconHelp.textContent = "Edit display"
             break
@@ -222,18 +291,18 @@ export class AppleView {
               } else {
                 machine.clock.start()
               }
-              iconImage.src = IconImages[machine.clock.isRunning ? 4 : 5]
+              iconImage.src = IconImages[machine.clock.isRunning ? 5 : 6]
               displayView.focus()
             })
             machine.clock.on("start", () => {
-              iconImage.src = IconImages[4]
+              iconImage.src = IconImages[5]
               displayView.focus()
             })
             machine.clock.on("stop", () => {
-              iconImage.src = IconImages[5]
+              iconImage.src = IconImages[6]
             })
             iconImage.style.scale = "80%"
-            iconImage.src = IconImages[machine.clock.isRunning ? 4 : 5]
+            iconImage.src = IconImages[machine.clock.isRunning ? 5 : 6]
             iconHelp.textContent = "Pause/resume"
             break
 
@@ -259,7 +328,7 @@ export class AppleView {
               clearTimeout(firstTimerId)
               clearInterval(repeatTimerId)
             })
-            iconImage.src = IconImages[forward ? 7 : 6]
+            iconImage.src = IconImages[forward ? 8 : 7]
             this.updateStepInfo(icon, forward)
 
             machine.clock.on("start", () => {
@@ -276,6 +345,8 @@ export class AppleView {
 
       this.topDiv.appendChild(iconDiv)
     }
+
+    this.topDiv.appendChild(screensDiv)
   }
 
   private updateScreenInfo(source: DisplaySource, isPaged: boolean, pageIndex: number) {

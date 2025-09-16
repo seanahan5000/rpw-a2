@@ -75,6 +75,7 @@ export class DisplayView {
   private rightButtonIsDown = false
   private mousePt?: Point
   private lastMousePt?: Point
+  private lastModifiers: number = 0
   private focusClick = false
   private joystick: Joystick
   private lastKey = ""
@@ -303,7 +304,7 @@ export class DisplayView {
 
   loadSettings(projectName: string) {
     this.projectName = projectName
-    this.isGame = projectName.toLowerCase().indexOf("naja") != -1
+    this.isGame = this.projectName.toLowerCase().indexOf("naja") != -1
   }
 
   onResize(width: number, height: number) {
@@ -312,6 +313,10 @@ export class DisplayView {
 
   public focus() {
     this.paintCanvas.focus()
+  }
+
+  public async takeSnapshot(): Promise<Blob> {
+    return this.paintDisplay.takeSnapshot()
   }
 
   //--------------------------------------------------------
@@ -350,18 +355,6 @@ export class DisplayView {
   //--------------------------------------------------------
   // display source and paging UI support
   //--------------------------------------------------------
-
-  public nextDisplaySource(reverse: boolean) {
-    if (this.isPagedFormat()) {
-      let nextSource: number
-      if (reverse) {
-        nextSource = (this.displaySource - 1) & 3
-      } else {
-        nextSource = (this.displaySource + 1) & 3
-      }
-      this.setDisplaySource(nextSource)
-    }
-  }
 
   public setDisplaySource(displaySource: DisplaySource) {
     this.displaySource = displaySource
@@ -441,6 +434,12 @@ export class DisplayView {
 
   private getForeColor(): number {
     return this.paintDisplay.getForeColor()
+  }
+
+  public setEditMode(enable: boolean) {
+    if (enable != this.isEditing) {
+      this.toggleEditMode()
+    }
   }
 
   public toggleEditMode(): boolean {
@@ -814,6 +813,7 @@ export class DisplayView {
     }
 
     this.paintCanvas.onkeydown = (e: KeyboardEvent) => {
+      this.lastModifiers = getModifierKeys(e)
 
       if (!this.isEditing) {
         if (e.key == "Meta") {
@@ -921,29 +921,22 @@ export class DisplayView {
 
       if (e.metaKey) {
         if (curKey == "x") {
-          if (!this.hostHooks) {
-            this.paintDisplay.cutSelection(getModifierKeys(e))
-            e.preventDefault()
-            e.stopPropagation()
-          }
+          this.paintDisplay.cutSelection(getModifierKeys(e))
+          e.preventDefault()
+          e.stopPropagation()
         } else if (curKey == "c") {
-          if (!this.hostHooks) {
-            this.paintDisplay.copySelection(getModifierKeys(e))
-            e.preventDefault()
-            e.stopPropagation()
-          }
+          this.paintDisplay.copySelection(getModifierKeys(e))
+          e.preventDefault()
+          e.stopPropagation()
         } else if (curKey == "v") {
-          if (!this.hostHooks) {
-            navigator.clipboard.readText().then(clipText => {
-              if (this.isEditing) {
-                this.paintDisplay.pasteSelection(clipText, this.mousePt)
-                e.preventDefault()
-                e.stopPropagation()
-              }
-            })
-          }
+          navigator.clipboard.readText().then(clipText => {
+            if (this.isEditing) {
+              this.paintDisplay.pasteSelection(clipText, this.mousePt)
+              e.preventDefault()
+              e.stopPropagation()
+            }
+          })
         } else if (curKey === "a") {
-          // NOTE: do this even if hostHooks is present
           this.paintDisplay.selectAll(e.ctrlKey)
           e.preventDefault()
           e.stopPropagation()
@@ -1088,6 +1081,12 @@ export class DisplayView {
         this.paintDisplay.optimize()
       } else if (curKey == "+") {
         this.showCrosshairs = !this.showCrosshairs
+      } else if (curKey == "n") {
+        if (e.shiftKey) {
+          this.isGame = !this.isGame
+          this.paintDisplay.isGame = this.isGame
+          this.updateCoordinateInfo()
+        }
       }
 
       this.lastKey = ""
@@ -1095,6 +1094,8 @@ export class DisplayView {
     }
 
     this.paintCanvas.onkeyup = (e: KeyboardEvent) => {
+      this.lastModifiers = getModifierKeys(e)
+
       if (!this.isEditing) {
         if (e.key == "Meta") {
           if (e.code == "MetaLeft") {
@@ -1107,7 +1108,7 @@ export class DisplayView {
           }
         }
       } else {
-        this.updateCursor(getModifierKeys(e))
+        this.updateCursor(this.lastModifiers)
       }
     }
 

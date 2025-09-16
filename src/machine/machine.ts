@@ -236,9 +236,11 @@ export class Machine implements IMachine, IMachineInput, IMachineDisplay, IMachi
   //--------------------------------------------------------
 
   public snapState(frameNumber: number) {
-    this.trimStates()
-    this.states.push(this.getState())
-    this.curStateIndex += 1
+    if ((frameNumber % 60) == 0) {
+      this.trimStates()
+      this.states.push(this.getState())
+      this.curStateIndex += 1
+    }
   }
 
   public getStateInfo() {
@@ -1113,6 +1115,9 @@ class DisplayGenerator {
     this.frameNumber = 0
     this.frameStartCycle = 0
     this.isInVBlank = undefined
+    if (hardReset && this.displayView) {
+      this.displayView.setEditMode(false)
+    }
   }
 
   public update(cycleCount: number, forceRedraw: boolean): boolean {
@@ -1126,6 +1131,9 @@ class DisplayGenerator {
     const newVBlank = (this.isInVBlank && !wasInVBlank)
     if (newVBlank || forceRedraw || wasInVBlank == undefined) {
       this.displayView?.update()
+    }
+    if (newVBlank) {
+      this.frameNumber += 1
     }
     return newVBlank
   }

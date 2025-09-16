@@ -8,7 +8,7 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 
 * II+ and IIe (unenhanced) hardware
 * Speaker
-* 5.25" floppy (read-only)
+* 5.25" floppy
 * Most display modes
 * Mockingboard (partial)
 * State snapshots and rewind
@@ -17,7 +17,7 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 
 ##### Known Problems
 
-* Mixed text and grqphics mode not supported
+* Mixed text and graphics mode not supported
 * Flashing text not supported
 * Mockingboard support is very limited for now
 

@@ -47,7 +47,9 @@ type StopNotification = RequestHeader & {
   error?: string
 }
 
-type SetRegisterRequest = RequestHeader & StackRegister
+type SetRegisterRequest = RequestHeader & StackRegister & {
+  stopCpu?: boolean
+}
 
 type ReadOpMemoryRequest = RequestHeader & {
   opBytes: number[]     // instruction bytes, to determine addressing mode
@@ -241,10 +243,8 @@ export class SocketDebugger {
       case "setRegister": {
         const req = <SetRegisterRequest>request
         this.machine.cpu.setRegister(req)
-        if (this.machine.clock.isRunning) {
-          if (req.name == "PC") {
-            this.onStop("requested")
-          }
+        if (req.stopCpu ?? true) {
+          this.onStop("requested")
         }
         this.sendAcknowledge(request)
         break
