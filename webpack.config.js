@@ -46,7 +46,8 @@ const extConfig = {
         new CopyWebpackPlugin({
             patterns: [
                 { from: 'src/display/display_view.css' },
-                { from: 'src/machine/apple_view.css' },
+                { from: 'src/machine/machine_view.css' },
+                { from: 'src/machine/apple/apple_view.css' },
                 { from: 'src/data_viewers.css' }
             ]
         })

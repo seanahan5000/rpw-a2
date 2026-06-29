@@ -1,6 +1,6 @@
 import * as base64 from 'base64-js'
-import { Point, Size, Rect, PixelData } from "../shared/types"
-import { DisplayFormat, Bitmap } from "./format"
+import { Point, Size, Rect, PixelData } from "../../../shared/types"
+import { DisplayFormat, Bitmap } from "../../../display/format"
 import { TextLoresInterleave, HGR_BLACK_RGB, HGR_WHITE_RGB } from "./tables"
 
 //------------------------------------------------------------------------------
@@ -245,7 +245,9 @@ export class Text80Format extends Text40Format {
 
 //------------------------------------------------------------------------------
 
+// TODO: move to platform independent code
 export abstract class Font {
+
   public static create(name: string): Font {
     if (name == "naja") {
       return new NajaFont()

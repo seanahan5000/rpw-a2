@@ -19,6 +19,26 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(ViewerProvider.register(context, "LST"))
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('rpwa2.LaunchEmulator', (platform?: string, stopOnEntry?: boolean) => {
+      if (platform) {
+        if (platform.startsWith("atari")) {
+          platform = platform.substring(5)
+        } else if (platform.startsWith("apple2")) {
+          platform = platform.substring(6)
+          if (platform[0] == "p") {
+            platform = "iip"
+          } else {
+            platform = "iie"
+          }
+        }
+      } else {
+        platform = "iie"
+      }
+      EmulatorPanel.createOrShow(context.extensionUri, platform, stopOnEntry ?? false)
+		})
+	)
+
+	context.subscriptions.push(
 		vscode.commands.registerCommand('rpwa2.LaunchEmulatorIIp', (stopOnEntry?: boolean) => {
 			EmulatorPanel.createOrShow(context.extensionUri, "iip", stopOnEntry ?? false)
 		})
@@ -27,6 +47,12 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('rpwa2.LaunchEmulatorIIe', (stopOnEntry?: boolean) => {
 			EmulatorPanel.createOrShow(context.extensionUri, "iie", stopOnEntry ?? false)
+		})
+	)
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('rpwa2.LaunchEmulator7800', (stopOnEntry?: boolean) => {
+			EmulatorPanel.createOrShow(context.extensionUri, "7800", stopOnEntry ?? false)
 		})
 	)
 

@@ -1,13 +1,11 @@
 
 import { Point, Rect } from "../shared/types"
-import { IMachineDisplay, IMachineInput, Joystick } from "../shared/types"
+import { IDisplay, IInputEventHandler, Joystick } from "../shared/types"
 import { IHostHooks } from "../shared/types"
 import { Tool, Cursor, ToolIconNames, ToolCursorNames, ToolCursorOrigins } from "./tools"
 import { ToolHelp, ColorHelp } from "./tools"
 import { PaintDisplay, getModifierKeys } from "./display"
-
-// TODO: is this needed for extension?
-// import "./display_view.css"
+import { DisplayFormat } from "./format"
 
 export enum DisplaySource {
   Visible   = 0,
@@ -47,8 +45,8 @@ const displayTemplate = `
 
 export class DisplayView {
   public topDiv: HTMLDivElement
-  private machineDisplay: IMachineDisplay
-  private machineInput?: IMachineInput
+  private machineDisplay: IDisplay
+  private inputHandler?: IInputEventHandler
   private displayMode: string
   private showPageTabs: boolean
   private showAppleView: boolean
@@ -77,7 +75,7 @@ export class DisplayView {
   private lastMousePt?: Point
   private lastModifiers: number = 0
   private focusClick = false
-  private joystick: Joystick
+  // private joystick: Joystick
   private lastKey = ""
   private startWidth?: number
   private startHeight?: number
@@ -94,17 +92,17 @@ export class DisplayView {
 
   public isGame = false
 
-  constructor(parent: HTMLElement, display: IMachineDisplay, input?: IMachineInput, oldUI = false) {
+  constructor(parent: HTMLElement, display: IDisplay, inputHandler?: IInputEventHandler, oldUI = false) {
 
     this.machineDisplay = display
-    this.machineInput = input
+    this.inputHandler = inputHandler
     this.displayMode = this.machineDisplay.getDisplayMode() ?? ""
 
     // TODO: base these on something real
-    this.showPageTabs = oldUI && (input != undefined)
-    this.showAppleView = !oldUI && (input != undefined)
-    this.allowToggleEdit = (input != undefined) // (project != undefined)
-    this.startInEditMode = (input == undefined) // (project == undefined)
+    this.showPageTabs = oldUI && (inputHandler != undefined)
+    this.showAppleView = !oldUI && (inputHandler != undefined)
+    this.allowToggleEdit = (inputHandler != undefined) // (project != undefined)
+    this.startInEditMode = (inputHandler == undefined) // (project == undefined)
 
     this.topDiv = <HTMLDivElement>document.createElement("div")
     // TODO: there's security issue with doing this within a VSCode webview
@@ -127,7 +125,7 @@ export class DisplayView {
 
     this.displayDiv = <HTMLDivElement>this.displayGrid.querySelector("#display-div")
     this.paintCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#paint-canvas")
-    this.paintDisplay = new PaintDisplay(this.displayMode, this.paintCanvas, this.machineDisplay)
+    this.paintDisplay = new PaintDisplay(this.getFormat(this.displayMode), this.paintCanvas, this.machineDisplay)
 
     // TODO: clean all this up
     this.toolPalette = <HTMLDivElement>this.displayGrid.querySelector("#tool-palette")
@@ -222,7 +220,20 @@ export class DisplayView {
       this.onToolRectChanged()
     }
 
-    this.joystick = { x0: 0, y0: 0, button0: false, button1: false }
+    // this.joystick = { x0: 0, y0: 0, button0: false, button1: false }
+  }
+
+  private getFormat(formatName: string): DisplayFormat {
+
+    // TODO: get rid of this apple-specific suffix
+    const isMixed = formatName.endsWith(".mixed")
+    // TODO: use isMixed for something
+
+    if (isMixed) {
+      formatName = formatName.substring(0, formatName.length - 6)
+    }
+
+    return this.machineDisplay.getFormat(formatName)!
   }
 
   private updateCursor(modifierKeys: number, cursor?: Cursor) {
@@ -317,39 +328,6 @@ export class DisplayView {
 
   public async takeSnapshot(): Promise<Blob> {
     return this.paintDisplay.takeSnapshot()
-  }
-
-  //--------------------------------------------------------
-  // joystick support
-  //--------------------------------------------------------
-
-  private resetJoystick() {
-    // choose initial joystickPt based entering location in canvas
-    // TODO: just use initial mouse point, scaled?
-    // TODO: don't use constants here
-    this.joystick.x0 = (this.mousePt?.x ?? 0) < 280 ? 0 : 255
-    this.joystick.y0 = (this.mousePt?.y ?? 0) < 192 ? 0 : 255
-    this.joystick.button0 = false
-    this.joystick.button1 = false
-  }
-
-  private updateJoystick() {
-    if (!this.mousePt || !this.lastMousePt) {
-      return
-    }
-    this.joystick.x0 += (this.mousePt.x - this.lastMousePt.x)
-    if (this.joystick.x0 < 0) {
-      this.joystick.x0 = 0
-    } else if (this.joystick.x0 > 255) {
-      this.joystick.x0 = 255
-    }
-    this.joystick.y0 += (this.mousePt.y - this.lastMousePt.y)
-    if (this.joystick.y0 < 0) {
-      this.joystick.y0 = 0
-    } else if (this.joystick.y0 > 255) {
-      this.joystick.y0 = 255
-    }
-    this.machineInput?.setJoystickValues(this.joystick)
   }
 
   //--------------------------------------------------------
@@ -514,7 +492,7 @@ export class DisplayView {
     if (newDisplayMode != this.displayMode) {
       this.displayMode = newDisplayMode
       const prevTool = this.paintDisplay.getTool()
-      this.paintDisplay = new PaintDisplay(newDisplayMode, this.paintCanvas, this.machineDisplay)
+      this.paintDisplay = new PaintDisplay(this.getFormat(newDisplayMode), this.paintCanvas, this.machineDisplay)
       this.prepareDisplay()
       this.paintDisplay.setTool(prevTool)
     }
@@ -815,17 +793,6 @@ export class DisplayView {
     this.paintCanvas.onkeydown = (e: KeyboardEvent) => {
       this.lastModifiers = getModifierKeys(e)
 
-      if (!this.isEditing) {
-        if (e.key == "Meta") {
-          if (e.code == "MetaLeft") {
-            this.joystick.button0 = true
-          } else if (e.code == "MetaRight") {
-            this.joystick.button1 = true
-          }
-          this.updateJoystick()
-        }
-      }
-
       let curKey = e.key.toLowerCase()
 
       if (e.metaKey && curKey == "e") {
@@ -836,84 +803,8 @@ export class DisplayView {
         return
       }
 
-      // ignore function keys here
       if (!this.isEditing) {
-        if (e.key[0] == "F" && e.key.length > 1) {
-          return
-        }
-      }
-
-      if (!this.isEditing) {
-        let appleCode = 0
-        if (!e.ctrlKey) {
-          let ascii40 = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ\[\\\]\^\_"
-          let i = ascii40.indexOf(e.key)
-          if (i >= 0) {
-            appleCode = 0x40 + i
-          } else {
-            let ascii60 = "\`abcdefghijklmnopqrstuvwxyz\{\|\}\~"
-            let i = ascii60.indexOf(e.key)
-            if (i >= 0) {
-              appleCode = 0x60 + i
-            } else {
-              let ascii20 = " \!\"\#\$\%\&\'\(\)\*\+\,\-\.\/0123456789\:\;\<\=\>\?"
-              let i = ascii20.indexOf(e.key)
-              if (i >= 0) {
-                appleCode = 0x20 + i
-              }
-            }
-          }
-        }
-        if (appleCode == 0) {
-          let code = e.which
-          if (code < 0x80) {
-            if (e.ctrlKey) {
-              if (code == 17) {
-                code = 0  // ignore control key by itself
-              } else {
-                // NOTE: assuming lower case supported, so only forcing
-                //  to upper case before applying control modifier
-                if (code >= 0x61 && code <= 0x7a) {  // 'a' to 'z'
-                    code -= 0x20  // 'a' - 'A'
-                }
-                if (code >= 0x40 && code < 0x60) {
-                  code -= 0x40
-                }
-              }
-            } else {
-              switch (code) {
-                case 37:
-                  code = 8    // left arrow
-                  break
-                case 38:
-                  code = 11   // up arrow
-                  break
-                case 39:
-                  code = 21   // right arrow
-                  break
-                case 40:
-                  code = 10   // down arrow
-                  break
-                case 16:      // shift
-                case 18:      // option
-                case 20:      // capslock
-                  code = 0    // ignore
-                  break
-              }
-            }
-            if (e.key != "Meta") {
-              appleCode = code
-            }
-          }
-        }
-
-        if (appleCode) {
-          this.machineInput?.setKeyCode(appleCode)
-          // eat everything (backspace, tab, escape, arrows)
-          //  that goes to Apple 2
-          e.preventDefault()
-          e.stopPropagation()
-        }
+        this.inputHandler?.onkeydown(e)
         return
       }
 
@@ -1094,19 +985,10 @@ export class DisplayView {
     }
 
     this.paintCanvas.onkeyup = (e: KeyboardEvent) => {
-      this.lastModifiers = getModifierKeys(e)
 
+      this.lastModifiers = getModifierKeys(e)
       if (!this.isEditing) {
-        if (e.key == "Meta") {
-          if (e.code == "MetaLeft") {
-            this.joystick.button0 = false
-          } else if (e.code == "MetaRight") {
-            this.joystick.button1 = false
-          }
-          if (this.mousePt) {
-            this.updateJoystick()
-          }
-        }
+        this.inputHandler?.onkeyup(e)
       } else {
         this.updateCursor(this.lastModifiers)
       }
@@ -1135,24 +1017,24 @@ export class DisplayView {
     this.paintCanvas.onpointerenter = (e: PointerEvent) => {
       this.mousePt = this.canvasFromClient(e)
       this.lastMousePt = this.mousePt
+      this.inputHandler?.setMousePt(this.mousePt, this.lastMousePt)
       if (this.isEditing) {
         this.updateCursor(getModifierKeys(e))
         this.updateCoordinateInfo(this.mousePt)
       } else {
-        if (this.hasFocus) {
-          this.resetJoystick()
-        }
+        this.inputHandler?.onpointerenter(e, this.hasFocus)
       }
     }
 
     this.paintCanvas.onpointerdown = (e: PointerEvent) => {
       this.lastMousePt = this.mousePt
       this.mousePt = this.canvasFromClient(e)
+      this.inputHandler?.setMousePt(this.mousePt, this.lastMousePt)
       // ignore click that puts element into focus
       if (!this.hasFocus) {
         this.focusClick = true
         if (!this.isEditing) {
-          this.resetJoystick()
+          this.inputHandler?.onpointerdown(e, true)
         }
         return
       }
@@ -1161,14 +1043,12 @@ export class DisplayView {
       if (e.which == 1) {
         this.paintCanvas.setPointerCapture(e.pointerId)
         this.leftButtonIsDown = true
-        this.joystick.button0 = true
         if (this.isEditing) {
           this.paintDisplay.toolDown(this.mousePt, getModifierKeys(e))
         }
       } else if (e.which == 3) {
         this.paintCanvas.setPointerCapture(e.pointerId)
         this.rightButtonIsDown = true
-        this.joystick.button1 = true
         // if (this.isEditing) {
         //   this.paintDisplay.toolRightDown(this.mousePt, getModifierKeys(e))
         // }
@@ -1176,7 +1056,7 @@ export class DisplayView {
       if (this.isEditing) {
         this.updateCursor(getModifierKeys(e))
       } else {
-        this.updateJoystick()
+        this.inputHandler?.onpointerdown(e, false)
       }
     }
 
@@ -1188,6 +1068,7 @@ export class DisplayView {
     this.paintCanvas.onpointermove = (e: PointerEvent) => {
       this.lastMousePt = this.mousePt
       this.mousePt = this.canvasFromClient(e)
+      this.inputHandler?.setMousePt(this.mousePt, this.lastMousePt)
       if (this.isEditing) {
         this.updateCursor(getModifierKeys(e))
         this.updateCoordinateInfo(this.mousePt)
@@ -1197,9 +1078,7 @@ export class DisplayView {
         //   this.paintDisplay.toolRightMove(this.mousePt, getModifierKeys(e))
         }
       } else {
-        if (this.hasFocus) {
-          this.updateJoystick()
-        }
+        this.inputHandler?.onpointermove(e, this.hasFocus)
       }
     }
 
@@ -1209,42 +1088,37 @@ export class DisplayView {
       }
       this.lastMousePt = this.mousePt
       this.mousePt = this.canvasFromClient(e)
+      this.inputHandler?.setMousePt(this.mousePt, this.lastMousePt)
       if (e.which == 1) {
         this.paintCanvas.releasePointerCapture(e.pointerId)
         this.leftButtonIsDown = false
-        this.joystick.button0 = false
         if (this.isEditing) {
           this.paintDisplay.toolUp(this.mousePt, getModifierKeys(e))
         }
       } else if (e.which == 3) {
         this.paintCanvas.releasePointerCapture(e.pointerId)
         this.rightButtonIsDown = false
-        this.joystick.button1 = false
         // if (this.isEditing) {
         //   this.paintDisplay.toolRightUp(this.mousePt, getModifierKeys(e))
         // }
       }
       if (this.isEditing) {
         this.updateCursor(getModifierKeys(e))
-      } else if (this.hasFocus) {
-        this.updateJoystick()
+      } else /*if (this.hasFocus)*/ {
+        this.inputHandler?.onpointerup(e, this.hasFocus)
       }
     }
 
     this.paintCanvas.onpointerleave = (e: PointerEvent) => {
       this.leftButtonIsDown = false
       this.rightButtonIsDown = false
-      this.joystick.button0 = false
-      this.joystick.button1 = false
       if (this.isEditing) {
         this.mousePt = undefined
         this.lastMousePt = undefined
         this.updateCursor(0, Cursor.None)
         this.updateCoordinateInfo()
       } else {
-        if (this.hasFocus) {
-          this.updateJoystick()
-        }
+        this.inputHandler?.onpointerleave(e, this.hasFocus)
       }
     }
 
@@ -1252,3 +1126,5 @@ export class DisplayView {
 
   //----------------------------------------------------------------------------
 }
+
+//------------------------------------------------------------------------------

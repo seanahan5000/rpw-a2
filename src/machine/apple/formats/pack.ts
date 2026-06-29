@@ -1,4 +1,4 @@
-import { PixelData } from "../shared/types"
+import { PixelData } from "../../../shared/types"
 
 //------------------------------------------------------------------------------
 

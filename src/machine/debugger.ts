@@ -4,13 +4,14 @@ import { StackEntry, StackRegister, BreakpointEntry } from "../shared/types"
 import { OpMode } from "./isa65xx"
 
 // TODO: clean these up (setting disk images)
-import { Machine, FileDiskImage } from "./machine"
+// *** move/abstract this to remove apple dependency ***
+import { AppleMachine, FileDiskImage } from "./apple/apple"
 
 //------------------------------------------------------------------------------
 
 // NOTE: duplicated in lsp_debugger.ts
 
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 type RequestHeader = {
   command: string
@@ -42,6 +43,7 @@ type StackResponse = RequestHeader & {
 type StopNotification = RequestHeader & {
   reason: string
   pc: number
+  cpuCycles: number
   dataAddress?: number
   dataString?: string
   error?: string
@@ -74,12 +76,12 @@ type ReadMemoryResponse = RequestHeader & {
   dataString: string    // actual data read in base64, possibly < readLength
 }
 
-type ReadRamRequest = RequestHeader & {
+type ReadRangeRequest = RequestHeader & {
   dataAddress: number   // read address
   dataLength: number    // number of bytes to read
 }
 
-type ReadRamResponse = RequestHeader & {
+type ReadRangeResponse = RequestHeader & {
   dataAddress: number   // effective read address
   dataString: string    // actual data read in base64
 }
@@ -95,7 +97,7 @@ type WriteMemoryResponse = RequestHeader & {
   bytesWritten: number  // bytes successfully written
 }
 
-type WriteRamRequest = RequestHeader & {
+type WriteRangeRequest = RequestHeader & {
   dataAddress: number     // direct write address
   dataString: string      // bytes to write in base64
 }
@@ -173,6 +175,12 @@ export class SocketDebugger {
         this.sendAcknowledge(request)
         break
 
+      case "softReset": {
+        this.machine.reset(false)
+        this.sendAcknowledge(request)
+        break
+      }
+
       case "launch": {
         const req = <LaunchRequest>request
         let error: string | undefined
@@ -194,6 +202,7 @@ export class SocketDebugger {
         const req = <AttachRequest>request
         let error: string | undefined
         if (req.version == ProtocolVersion) {
+          this.machine.update(0, true)
           if (req.stopOnEntry || !this.machine.clock.isRunning) {
             this.machine.clock.stop("attach")
           }
@@ -274,8 +283,8 @@ export class SocketDebugger {
         break
       }
 
-      case "readRam": {
-        const response = this.onReadRam(<ReadRamRequest>request)
+      case "readRange": {
+        const response = this.onReadRange(<ReadRangeRequest>request)
         this.sendResponse(request, response)
         break
       }
@@ -286,8 +295,8 @@ export class SocketDebugger {
         break
       }
 
-      case "writeRam": {
-        this.onWriteRam(<WriteRamRequest>request)
+      case "writeRange": {
+        this.onWriteRange(<WriteRangeRequest>request)
         this.sendAcknowledge(request)
         break
       }
@@ -448,9 +457,9 @@ export class SocketDebugger {
     return response
   }
 
-  private onReadRam(request: ReadRamRequest): ReadRamResponse {
-    const memory = this.machine.memory.readRam(request.dataAddress, request.dataLength)
-    const response: ReadRamResponse = {
+  private onReadRange(request: ReadRangeRequest): ReadRangeResponse {
+    const memory = this.machine.memory.readRange(request.dataAddress, request.dataLength)
+    const response: ReadRangeResponse = {
       command: request.command,
       dataAddress: request.dataAddress,
       dataString: base64.fromByteArray(memory)
@@ -465,6 +474,7 @@ export class SocketDebugger {
     const address = request.dataAddress
     let length = data.length
 
+    // TODO: apple-specific
     // don't allow writing to any potential soft switches
     // *** what if it starts inside soft switches? ***
     if (address < 0xC000 && address + length > 0xC000) {
@@ -474,6 +484,7 @@ export class SocketDebugger {
         length = 0
       }
     }
+    // TODO: don't use cpu cycles directly for Atari
     const cycleCount = this.machine.cpu.getCycles()
     for (let i = 0; i < length; i += 1) {
       this.machine.memory.write(address + i, data[i], cycleCount)
@@ -488,9 +499,9 @@ export class SocketDebugger {
     return response
   }
 
-  private onWriteRam(request: WriteRamRequest): void {
+  private onWriteRange(request: WriteRangeRequest): void {
     const data = base64.toByteArray(request.dataString)
-    this.machine.memory.writeRam(request.dataAddress, data)
+    this.machine.memory.writeRange(request.dataAddress, data)
   }
 
   private onSetDiskImage(request: SetDiskImageRequest): void {
@@ -508,7 +519,7 @@ export class SocketDebugger {
     }
 
     // TODO: add to interface? find device?
-    const machine = <Machine>this.machine
+    const machine = <AppleMachine>this.machine
     machine.setDiskImage(request.driveIndex, diskImage)
   }
 }

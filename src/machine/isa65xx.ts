@@ -1,5 +1,5 @@
 
-import { IMachineIsa, OpcodeDef } from "../shared/types"
+import { ICpuIsa, OpcodeDef } from "../shared/types"
 
 //------------------------------------------------------------------------------
 
@@ -55,7 +55,7 @@ export enum OpMode {
 export type OpcodeType = Map<OpMode, OpcodeDef> // mode
 type OpcodeByName = Map<string, OpcodeType>     // name
 
-export abstract class Isa implements IMachineIsa {
+export abstract class Isa implements ICpuIsa {
   public opcodeByName: OpcodeByName = new Map<string, OpcodeType>()
   public opcodes: OpcodeDef[] = new Array(256)
 

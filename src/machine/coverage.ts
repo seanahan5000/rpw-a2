@@ -1,4 +1,4 @@
-import { IMachineIsa } from "../shared/types"
+import { ICpuIsa } from "../shared/types"
 
 export enum CoverageState {
   Executed      = 1,
@@ -11,7 +11,7 @@ export enum CoverageState {
 // TODO: handle high/banked/aux RAM
 // TODO: include reads/writes, change state on overwrite
 export class Coverage {
-  private isa: IMachineIsa
+  private isa: ICpuIsa
   private state: Uint8Array
   private nextState: Uint8Array
   private minPC!: number
@@ -20,7 +20,7 @@ export class Coverage {
 
   public process = () => {}
 
-  constructor(isa: IMachineIsa) {
+  constructor(isa: ICpuIsa) {
     this.isa = isa
     this.state = new Uint8Array(0x10000)
     this.nextState = new Uint8Array(0x10000)

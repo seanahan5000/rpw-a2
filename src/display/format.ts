@@ -79,7 +79,7 @@ export abstract class DisplayFormat {
 
   // TODO: add interleaveFrame?
   public abstract deinterleaveFrame(data: Uint8Array): PixelData
-  // TODO: default pass-thru code
+  // TODO: default pass-thru code -- for non-Apple platform ***
 
   public decode(pixelData: PixelData): Bitmap {
     const bitmap = this.createBitmap(pixelData.bounds)

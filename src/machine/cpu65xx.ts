@@ -5,7 +5,9 @@
 //  - 65C02: ADC and SBC do not add extra cycle in decimal mode
 //  - 65C02: extra write still happens in read-modify-write operations
 
-import { IMachineCpu, IMachineIsa, IMachineMemory, StackEntry, StackRegister } from "../shared/types"
+// *** remove fetchOpcode at start of each instruction ***
+
+import { ICpu, ICpuEvents, ICpuIsa, IMemory, StackEntry, StackRegister } from "../shared/types"
 import { OpInfo } from "../shared/types"
 import { Isa, OpMode } from "./isa65xx"
 
@@ -19,10 +21,10 @@ const NMI_VECTOR = 0xfffa
 const RESET_VECTOR = 0xfffc
 const IRQ_VECTOR = 0xfffe
 
-export class Cpu65xx implements IMachineCpu {
+export class Cpu65xx implements ICpu {
 
   private _isa: Isa
-  public mem: IMachineMemory
+  public mem: IMemory
   // TODO: any need for RDY flag?
 
   private instructions: Instruction[] = new Array(256)
@@ -44,10 +46,12 @@ export class Cpu65xx implements IMachineCpu {
   private T: number = 0
   private opcode: number = -1
   private instruction: Instruction = []
+  private curCycleCount: number = 0
+  private curCycleScale: number = 0
 
-  public cycles: number = 0
   private pendingNMI: boolean = false
   private pendingIRQ: boolean = false
+  private pendingHalt: boolean = false
 
   private data: number = 0
   private AD: number = 0
@@ -61,9 +65,10 @@ export class Cpu65xx implements IMachineCpu {
   private debugHook?: Function
   private callHook?: Function
   private returnHook?: Function
+  private haltHook?: Function
   private escapeHooks?: Function[]
 
-  constructor(isa: Isa, mem: IMachineMemory) {
+  constructor(isa: Isa, mem: IMemory) {
     this._isa = isa
     this.mem = mem
 
@@ -81,9 +86,9 @@ export class Cpu65xx implements IMachineCpu {
     state.Y = this.Y,
     state.PS = this.getStatusBits()
     state.T = this.T
-    state.cycles = this.cycles
     state.pendingNMI = this.pendingNMI
     state.pendingIRQ = this.pendingIRQ
+    state.pendingHalt = this.pendingHalt
     state.vstack = this.vstack.getStateStack()
     state.opcode = this.opcode
     return state
@@ -101,31 +106,56 @@ export class Cpu65xx implements IMachineCpu {
     this.Y = state.Y
     this.setStatusBits(state.PS)
     this.T = state.T
-    this.cycles = state.cycles
     this.pendingNMI = state.pendingNMI
     this.pendingIRQ = state.pendingIRQ
+    this.pendingHalt = state.pendingHalt
     this.opcode = state.opcode
     this.instruction = this.instructions[this.opcode]
     this.vstack.setState(state.vstack)
   }
 
-  public get isa(): IMachineIsa {
+  public get isa(): ICpuIsa {
     return this._isa
   }
 
   public reset() {
-    this.I = 1
-    this.PC = this.mem.read(RESET_VECTOR, this.cycles)
-      | (this.mem.read(RESET_VECTOR + 1, this.cycles) << 8)
-    this.cycles = 0
     this.pendingNMI = false
     this.pendingIRQ = false
+    this.pendingHalt = false    // clear before PC read
+    this.I = 1
+    this.PC = this.read(RESET_VECTOR) | (this.read(RESET_VECTOR + 1) << 8)
     this.vstack.reset()
     this.fetchNextOpcode()
   }
 
+  public requestHalt() {
+    this.pendingHalt = true
+  }
+
+  public clearHalt() {
+    this.pendingHalt = false
+  }
+
+  private read(address: number): number {
+    if (this.pendingHalt) {
+      if (this.haltHook) {
+        this.curCycleCount = this.haltHook(this.curCycleCount)
+      }
+      this.pendingHalt = false
+    }
+    return this.mem.read(address, this.curCycleCount)
+  }
+
+  private write(address: number, value: number) {
+    this.mem.write(address, value, this.curCycleCount)
+  }
+
   // advance one instructions worth of cycles
-  public nextInstruction(): number {
+  public nextInstruction(cycleCount: number, cycleScale: number): number {
+
+    let cycleDelta = cycleCount
+    this.curCycleCount = cycleCount
+    this.curCycleScale = cycleScale
 
     // NOTE: assume T == 0 always true here
     if (this.pendingNMI) {
@@ -135,16 +165,17 @@ export class Cpu65xx implements IMachineCpu {
       this.takeIRQ()
     }
 
-    let opCycles = 0
     do {
       // advance clock a single cycle
       this.T += 1
+      this.curCycleCount += cycleScale
       this.instruction[this.T]()
-      this.cycles += 1
-
-      opCycles += 1
     } while (this.T != 0)
-    return opCycles
+
+    this.curCycleScale = 0
+    cycleDelta = this.curCycleCount - cycleDelta
+    this.curCycleCount = -1
+    return cycleDelta
   }
 
   // state
@@ -184,9 +215,9 @@ export class Cpu65xx implements IMachineCpu {
     }
   }
 
-  public getCycles(): number {
-    return this.cycles
-  }
+  // public getCycles(): number {
+  //   return this.cycles
+  // }
 
   public getStatusBits(): number {
     return this.N << 7
@@ -207,8 +238,8 @@ export class Cpu65xx implements IMachineCpu {
     this.C = val & 1
   }
 
-  public getCallStack(): StackEntry[] {
-    return this.vstack.getCallStack()
+  public getCallStack(curCycleCount: number): StackEntry[] {
+    return this.vstack.getCallStack(curCycleCount)
   }
 
   public enableCheckStack(enable: boolean): void {
@@ -217,8 +248,8 @@ export class Cpu65xx implements IMachineCpu {
 
   // hooks
 
-  public on(name: string, listener: () => void): void {
-    switch (name) {
+  public on<K extends keyof ICpuEvents>(event: K, listener: ICpuEvents[K]): void {
+    switch (event) {
       case "debug":
         this.debugHook = listener
         break
@@ -227,6 +258,9 @@ export class Cpu65xx implements IMachineCpu {
         break
       case "return":
         this.returnHook = listener
+        break
+      case "halt":
+        this.haltHook = listener
         break
     }
   }
@@ -271,55 +305,55 @@ export class Cpu65xx implements IMachineCpu {
   // fetch functions
 
   private fetchNextOpcode = () => {
-    this.opcode = this.mem.read(this.PC, this.cycles)
+    this.opcode = this.read(this.PC)
     this.instruction = this.instructions[this.opcode]
     this.T = 0
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchAndDiscard = () => {
-    this.mem.read(this.PC, this.cycles)
+    this.read(this.PC)
   }
 
   private fetchBranchOffset = () => {
-    this.branchOffset = this.mem.read(this.PC, this.cycles)
+    this.branchOffset = this.read(this.PC)
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchADL = () => {
-    this.AD = this.mem.read(this.PC, this.cycles)
+    this.AD = this.read(this.PC)
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchADH = () => {
-    this.AD |= this.mem.read(this.PC, this.cycles) << 8
+    this.AD |= this.read(this.PC) << 8
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchADLFromBA = () => {
-    this.AD = this.mem.read(this.BA, this.cycles)
+    this.AD = this.read(this.BA)
   }
 
   private fetchADHFromBA = () => {
-    this.AD |= this.mem.read(this.BA, this.cycles) << 8
+    this.AD |= this.read(this.BA) << 8
   }
 
   private fetchBAL = () => {
-    this.BA = this.mem.read(this.PC, this.cycles)
+    this.BA = this.read(this.PC)
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchBAH = () => {
-    this.BA |= this.mem.read(this.PC, this.cycles) << 8
+    this.BA |= this.read(this.PC) << 8
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchBALFromIA = () => {
-    this.BA = this.mem.read(this.IA, this.cycles)
+    this.BA = this.read(this.IA)
   }
 
   private fetchBAHFromIA = () => {
-    this.BA = (this.BA & 0x00FF) | (this.mem.read(this.IA, this.cycles) << 8)
+    this.BA = (this.BA & 0x00FF) | (this.read(this.IA) << 8)
   }
 
   private addXtoBAL = () => {
@@ -347,12 +381,12 @@ export class Cpu65xx implements IMachineCpu {
   // *** rename fetch -> read ***
 
   private fetchIAL = () => {
-    this.IA = this.mem.read(this.PC, this.cycles)
+    this.IA = this.read(this.PC)
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchIAH = () => {
-    this.IA |= this.mem.read(this.PC, this.cycles) << 8
+    this.IA |= this.read(this.PC) << 8
     this.PC = (this.PC + 1) & 0xffff
   }
 
@@ -367,24 +401,24 @@ export class Cpu65xx implements IMachineCpu {
   }
 
   private fetchDataFromImm = () => {
-    this.data = this.mem.read(this.PC, this.cycles)
+    this.data = this.read(this.PC)
     this.PC = (this.PC + 1) & 0xffff
   }
 
   private fetchDataFromAD = () => {
-    this.data = this.mem.read(this.AD, this.cycles)
+    this.data = this.read(this.AD)
   }
 
   private fetchDataFromBA = () => {
-    this.data = this.mem.read(this.BA, this.cycles)
+    this.data = this.read(this.BA)
   }
 
   private writeDataToAD = () => {
-    this.mem.write(this.AD, this.data, this.cycles)
+    this.mem.write(this.AD, this.data, this.curCycleCount)
   }
 
   private writeDataToBA = () => {
-    this.mem.write(this.BA, this.data, this.cycles)
+    this.mem.write(this.BA, this.data, this.curCycleCount)
   }
 
   private addBranchOffsetToPCL = () => {
@@ -823,15 +857,15 @@ export class Cpu65xx implements IMachineCpu {
 
   private popFromStack = () => {
     this.SP = (this.SP + 1) & 255
-    return this.mem.read(0x0100 + this.SP, this.cycles)
+    return this.read(0x0100 + this.SP)
   }
 
   private peekFromStack = () => {
-    return this.mem.read(0x0100 + this.SP, this.cycles)
+    return this.read(0x0100 + this.SP)
   }
 
   private pushToStack = (val: number) => {
-    this.mem.write(0x0100 + this.SP, val, this.cycles)
+    this.mem.write(0x0100 + this.SP, val, this.curCycleCount)
     this.SP = (this.SP - 1) & 255
   }
 
@@ -1395,7 +1429,7 @@ export class Cpu65xx implements IMachineCpu {
       () => { this.pushToStack(this.PC & 0xff) },
       this.fetchADH,
       () => {
-        const error = this.vstack.JSR(this.AD)
+        const error = this.vstack.JSR(this.AD, this.curCycleCount)
         if (error && this.debugHook) {
           this.debugHook(error)
         }
@@ -1457,8 +1491,8 @@ export class Cpu65xx implements IMachineCpu {
         // set E and B bits when pushing
         this.pushToStack(this.getStatusBits() | 0x30)
       },
-      () => { this.AD = this.mem.read(IRQ_VECTOR, this.cycles) },
-      () => { this.AD |= this.mem.read(IRQ_VECTOR + 1, this.cycles) << 8 },
+      () => { this.AD = this.read(IRQ_VECTOR) },
+      () => { this.AD |= this.read(IRQ_VECTOR + 1) << 8 },
       () => {
         this.vstack.BRK(this.AD)
         this.PC = this.AD
@@ -1476,8 +1510,8 @@ export class Cpu65xx implements IMachineCpu {
       () => { this.pushToStack((this.PC >>> 8) & 0xff) },
       () => { this.pushToStack(this.PC & 0xff) },
       () => { this.pushToStack(this.getStatusBits()) },
-      () => { this.AD = this.mem.read(IRQ_VECTOR, this.cycles) },
-      () => { this.AD |= this.mem.read(IRQ_VECTOR + 1, this.cycles) << 8 },
+      () => { this.AD = this.read(IRQ_VECTOR) },
+      () => { this.AD |= this.read(IRQ_VECTOR + 1) << 8 },
       () => {
         this.vstack.IRQ(this.AD)
         this.PC = this.AD
@@ -1490,18 +1524,13 @@ export class Cpu65xx implements IMachineCpu {
     return [
       this.fetchNextOpcode,
       this.fetchDataFromImm,
-      () => {
-        if (this.debugHook) {
-          this.debugHook()
-        }
-        this.pushToStack((this.PC >>> 8) & 0xff)
-      },
+      () => { this.pushToStack((this.PC >>> 8) & 0xff) },
       () => { this.pushToStack(this.PC & 0xff) },
       () => { this.pushToStack(this.getStatusBits()) },
-      () => { this.AD = this.mem.read(NMI_VECTOR, this.cycles) },
-      () => { this.AD |= this.mem.read(NMI_VECTOR + 1, this.cycles) << 8 },
+      () => { this.AD = this.read(NMI_VECTOR) },
+      () => { this.AD |= this.read(NMI_VECTOR + 1) << 8 },
       () => {
-        this.vstack.NMI(this.AD)
+        this.vstack.NMI(this.AD, this.curCycleCount)
         this.PC = this.AD
         this.fetchNextOpcode()
       }
@@ -2153,8 +2182,8 @@ export class Cpu65xx implements IMachineCpu {
   private ESC(index: number) {
     return this.immRead(() => {
       if (this.escapeHooks && this.escapeHooks[index]) {
-        this.cycles -= 2
-        this.escapeHooks[index](this.data, this.cycles)
+        this.curCycleCount -= 2 * this.curCycleScale
+        this.escapeHooks[index](this.data, this.curCycleCount)
       }
     })
   }
@@ -2243,41 +2272,75 @@ class VirtualStack {
     this.currProc = this.cpu.getPC()
   }
 
-  public JSR(dstAddr: number): string | undefined {
+  public JSR(dstAddr: number, cycleCount: number, isNMI: boolean = false): string | undefined {
 
     this.tracker.push(Tracker.JsrHigh)
     this.tracker.push(Tracker.JsrLow)
+    if (isNMI) {
+      this.tracker.push(Tracker.Php)
+    }
     if (this.tracker.length >= 256 && this.checkStack) {
       return "Stack overflow"
     }
 
     // calling proc, retAddr to JSR
     const PC = this.cpu.getPC() - 2
-    this.pushState(this.currProc, PC)
+    this.pushState(this.currProc, PC, cycleCount)
 
     this.currProc = dstAddr
   }
 
-  public RTS(dstAddr: number): string | undefined {
+  public RTS(dstAddr: number, isRTI: boolean = false): string | undefined {
 
     this.currProc = (dstAddr + 1) & 0xFFFF
 
     let error: string | undefined
+
+    if (isRTI) {
+      const statX = this.tracker.pop() ?? Tracker.Empty
+      switch (statX) {
+        case Tracker.JsrHigh:
+          if (!error) {
+            error = "Popping return address high byte into status byte"
+          }
+          break
+        case Tracker.JsrLow:
+          if (!error) {
+            error = "Popping return address low byte into status byte"
+          }
+          break
+        case Tracker.Pha:
+        case Tracker.Php:
+          break
+        case Tracker.Empty:
+          if (!error) {
+            error = "Missing value to pop into status byte"
+          }
+          break
+      }
+    }
+
     const lowX = this.tracker.pop() ?? Tracker.Empty
     const highX = this.tracker.pop() ?? Tracker.Empty
 
     switch (lowX) {
       case Tracker.JsrHigh:
-        error = "Popping return address high byte into low byte"
+        if (!error) {
+          error = "Popping return address high byte into low byte"
+        }
         break
       case Tracker.JsrLow:
       case Tracker.Pha:
         break
       case Tracker.Php:
-        error = "Popping PHP value into return address low byte"
+        if (!error) {
+         error = "Popping PHP value into return address low byte"
+        }
         break
       case Tracker.Empty:
-        error = "Missing value to pop into return address low byte"
+        if (!error) {
+          error = "Missing value to pop into return address low byte"
+        }
         break
     }
 
@@ -2313,6 +2376,14 @@ class VirtualStack {
     return this.checkStack ? error : undefined
   }
 
+  public NMI(dstAddr: number, cycleCount: number): string | undefined {
+    return this.JSR(dstAddr, cycleCount, true)
+  }
+
+  public RTI(dstAddr: number): string | undefined {
+    return this.RTS(dstAddr, true)
+  }
+
   public PHA(): string | undefined {
     this.tracker.push(Tracker.Pha)
     if (this.tracker.length >= 256 && this.checkStack) {
@@ -2321,6 +2392,7 @@ class VirtualStack {
   }
 
   public PHP(): string | undefined {
+    // TODO: problem with this in COMBAT 2600
     this.tracker.push(Tracker.Php)
     if (this.tracker.length >= 256 && this.checkStack) {
       return "Stack overflow"
@@ -2361,21 +2433,16 @@ class VirtualStack {
   public IRQ(dstAddr: number) {
   }
 
-  public NMI(dstAddr: number) {
-  }
-
-  public RTI(dstAddr: number) {
-    // dstAddr = (dstAddr + 1) & 0xFFFF
-  }
-
   public TXS() {
   }
+
+  // *** TSX too?
 
   // TODO: rethink handling JMP as possible JSR + RTS
   public JMP(dstAddr: number) {
   }
 
-  public getCallStack(): StackEntry[] {
+  public getCallStack(curCycleCount: number): StackEntry[] {
 
     // TODO: get rid of this cleanup hack
     // (can't do it in reset() or loadState() because PC is actually PC-1)
@@ -2383,7 +2450,7 @@ class VirtualStack {
       this.currProc = this.cpu.getPC()
     }
 
-    this.pushState(this.currProc, this.cpu.getPC())
+    this.pushState(this.currProc, this.cpu.getPC(), curCycleCount)
     const result: StackEntry[] = []
     for (let i = this.stack.length; --i >= 0; ) {
       const entry = this.stack[i]
@@ -2399,14 +2466,14 @@ class VirtualStack {
           { name: "X", value: entry.regs[4] },
           { name: "Y", value: entry.regs[5] },
         ],
-        cycles: entry.cycles
+        cpuCycles: entry.cycles
       })
     }
     this.stack.pop()
     return result
   }
 
-  private pushState(proc: number, procPC: number) {
+  private pushState(proc: number, procPC: number, cycleCount: number) {
     this.stack.push({
       proc: proc,
       regs: [
@@ -2417,7 +2484,7 @@ class VirtualStack {
         this.cpu.X,
         this.cpu.Y,
       ],
-      cycles: this.cpu.cycles
+      cycles: cycleCount
     })
   }
 }

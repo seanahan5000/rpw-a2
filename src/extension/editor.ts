@@ -566,10 +566,18 @@ export class EmulatorPanel {
         // TODO: start emulator?
       }
     } else {
+      let windowName: string
+      if (machine == "7800") {
+        windowName = "Atari 7800"
+      } else if (machine == "iip") {
+        windowName = "Apple ][+"
+      } else {
+        windowName = "Apple IIe"
+      }
       const panel = vscode.window.createWebviewPanel(
         "rpwa2.EMU",
         // TODO: more later
-        machine == "iip" ? "Apple ][+" : "Apple IIe",
+        windowName,
         vscode.ViewColumn.Two,
         {
           enableScripts: true,
@@ -657,6 +665,9 @@ export class EmulatorPanel {
     const styleMainUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, 'out', 'display_view.css'))
 
+    const styleMachineUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'out', 'machine_view.css'))
+
     const styleAppleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, 'out', 'apple_view.css'))
 
@@ -680,6 +691,7 @@ export class EmulatorPanel {
       <body>
         <link href="${styleMainUri}" rel="stylesheet" />
         <link href="${styleAppleUri}" rel="stylesheet" />
+        <link href="${styleMachineUri}" rel="stylesheet" />
         <div id="top-div"></div>
         <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>

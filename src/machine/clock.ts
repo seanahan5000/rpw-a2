@@ -16,35 +16,36 @@ export function ASSERT(condition: boolean, message: string = "") {
 
 //------------------------------------------------------------------------------
 
-enum StepMode {
+export enum StepMode {
   None = 0,
   Over = 1,
   Out  = 2,
   Stop = 3
 }
 
-export class Clock implements IClock {
+export abstract class Clock implements IClock {
 
   protected machine!: IMachine
   public coverage?: Coverage
-  public breakHook?: (pc: number) => string
 
-  private clockRate = 0
-  private frameRate = 0
-  private cyclesPerFrame = 0
+  protected clockRate: number
+  protected cpuClockScale: number
+  protected frameRate: number
 
-  private runTimerId?: NodeJS.Timeout
-  private nextCpuRunTimeMs = 0
+  protected clockCycles: number
 
-  private stopRequested = false
-  private stepMode = StepMode.None
-  private stepDepth = 0
-  private stepBreak = -1
-  private breakMap = new Map<number, boolean>()
+  protected runTimerId?: NodeJS.Timeout
+  protected nextRunTimeMs = 0
+
+  protected stopRequested = false
+  protected stepMode = StepMode.None
+  protected stepDepth = 0
+  protected stepBreak = -1
+  protected breakMap = new Map<number, boolean>()
 
   private emitter = new EventEmitter()
 
-  constructor(machine: IMachine, clockRate: number, frameRate: number) {
+  constructor(machine: IMachine, clockRate: number, frameRate: number, cpuClockScale: number) {
     this.machine = machine
 
     this.machine.cpu.on("debug", (error?: string) => {
@@ -70,22 +71,34 @@ export class Clock implements IClock {
     })
 
     this.clockRate = clockRate
+    this.cpuClockScale = cpuClockScale
     this.frameRate = frameRate
-    this.cyclesPerFrame = clockRate / this.frameRate
-    ASSERT(this.cyclesPerFrame == Math.floor(this.cyclesPerFrame))
+
+    this.clockCycles = 0
   }
 
   public reset(hardReset: boolean) {
     ASSERT(this.machine != undefined)
+    this.clockCycles = 0
     this.stepMode = StepMode.None
     this.stepDepth = 0
     this.stepBreak = -1
     this.stop(hardReset ? "hardReset" : "reset")
   }
 
+  public getState(): any {
+    let state: any = {}
+    state.clockCycles = this.clockCycles
+    return state
+  }
+
+  public setState(state: any) {
+    this.clockCycles = state.clockCycles
+  }
+
   public start() {
     if (!this.isRunning) {
-      this.nextCpuRunTimeMs = Date.now()
+      this.nextRunTimeMs = Date.now()
       this.runTimerId = setTimeout(() => { this.runClock() }, 0)
       this.emit("start")
     }
@@ -104,84 +117,71 @@ export class Clock implements IClock {
 
   private runClock() {
 
-    this.runTimerId = undefined
+    if (this.runTimerId) {
+      clearTimeout(this.runTimerId)
+      this.runTimerId = undefined
+    }
 
-    const partialFrameCycles = this.machine.cpu.getCycles() % this.cyclesPerFrame
-    const stopReason = this.advanceClock(this.cyclesPerFrame - partialFrameCycles)
-    if (stopReason) {
+    const stopReason = this.advanceClock()
+    if (stopReason != "vblank") {
+      this.coverage?.process()
       this.emit("stop", stopReason)
       return
     }
 
     // reschedule one frame into the future, minus time spent on this frame
-    this.nextCpuRunTimeMs += 1000 / this.frameRate
+    this.nextRunTimeMs += 1000 / this.frameRate
     const timeNowMs = Date.now()
-    let scheduleDeltaMs = Math.floor(this.nextCpuRunTimeMs - timeNowMs)
+    let scheduleDeltaMs = Math.floor(this.nextRunTimeMs - timeNowMs)
 
     // reset scheduling if time delta goes negative, probably due to debugging
-    if (scheduleDeltaMs < 0 || partialFrameCycles > 10) {
+    if (scheduleDeltaMs < 0 /* *** || partialFrameCycles > 10 *** */) {
       scheduleDeltaMs = 0
-      this.nextCpuRunTimeMs = timeNowMs
+      this.nextRunTimeMs = timeNowMs
     }
 
     this.runTimerId = setTimeout(() => { this.runClock() }, scheduleDeltaMs)
   }
 
-  private advanceClock(advanceCount: number): string {
+  protected abstract advanceClock(): string
+
+  protected oneInstruction(): number {
+    let cycleDelta: number
+    if (this.coverage) {
+      const startPC = this.machine.cpu.getPC()
+      const opByte = this.machine.memory.readConst(startPC)
+      cycleDelta = this.machine.cpu.nextInstruction(this.clockCycles, this.cpuClockScale)
+      const nextPC = this.machine.cpu.getPC()
+      this.coverage.step(startPC, nextPC, opByte)
+    } else {
+      cycleDelta = this.machine.cpu.nextInstruction(this.clockCycles, this.cpuClockScale)
+    }
+    this.clockCycles += cycleDelta
+    return cycleDelta
+  }
+
+  protected checkStops(): string {
     let stopReason = ""
-    const cpu = this.machine.cpu
-    do {
-      let cycles: number
-      if (this.coverage) {
-        const startPC = cpu.getPC()
-        const opByte = this.machine.memory.readConst(startPC)
-        cycles = cpu.nextInstruction()
-        const nextPC = cpu.getPC()
-        this.coverage.step(startPC, nextPC, opByte)
-      } else {
-        cycles = cpu.nextInstruction()
-      }
 
-      advanceCount -= cycles
-      this.machine.update(cpu.getCycles(), false)
-
-      if (this.stopRequested) {
-        stopReason = "requested"
-        this.stopRequested = false
-      }
-
-      const pc = cpu.getPC()
-      if (pc == this.stepBreak) {
-        this.stepBreak = -1
-        stopReason = "step"
-      }
-
-      if (this.breakMap.get(pc)) {
-        stopReason = "breakpoint"
-      }
-
-      // TODO: remove this hook to support old projects
-      if (this.breakHook) {
-        const breakType = this.breakHook(pc)
-        if (breakType != "") {
-          stopReason = breakType
-        }
-      }
-
-      if (this.stepMode == StepMode.Stop) {
-        this.stepMode = StepMode.None
-        stopReason = "step"
-      }
-
-    } while (advanceCount > 0 && !stopReason)
-
-    if (stopReason) {
-      // force display redraw when stepping
-      this.machine.update(cpu.getCycles(), true)
-
-      this.coverage?.process()
+    if (this.stopRequested) {
+      stopReason = "requested"
+      this.stopRequested = false
     }
 
+    const pc = this.machine.cpu.getPC()
+    if (pc == this.stepBreak) {
+      this.stepBreak = -1
+      stopReason = "step"
+    }
+
+    if (this.breakMap.get(pc)) {
+      stopReason = "breakpoint"
+    }
+
+    if (this.stepMode == StepMode.Stop) {
+      this.stepMode = StepMode.None
+      stopReason = "step"
+    }
     return stopReason
   }
 
@@ -189,8 +189,16 @@ export class Clock implements IClock {
     return this.runTimerId != undefined
   }
 
-  public getClockRate(): number {
+  public get rate(): number {
     return this.clockRate
+  }
+
+  public get cycles(): number {
+    return this.clockCycles
+  }
+
+  public get cpuCycles(): number {
+    return Math.floor(this.clockCycles / this.cpuClockScale)
   }
 
   public stepInto() {
@@ -252,6 +260,122 @@ export class Clock implements IClock {
 
   protected emit<K extends keyof IClockEvents>(event: K, ...args: Parameters<IClockEvents[K]>): void {
     this.emitter.emit(event, ...args);
+  }
+}
+
+//------------------------------------------------------------------------------
+
+import { DisplayView } from "../display/display_view"
+
+export abstract class DisplayClock extends Clock {
+
+  public inVBlank: boolean = false
+  protected hasStopped: boolean = false
+  protected forceUpdate: boolean = false
+  protected frameNumber: number = 0
+  protected lineNumber: number = 0
+  protected lineCycles: number = 0
+  protected displayView?: DisplayView
+
+  constructor(
+      machine: IMachine,
+      protected cyclesPerLine: number,
+      protected visibleLines: number,
+      protected linesPerFrame: number,
+      protected framesPerSecond: number,
+      protected cpuClockScale: number) {
+
+    const clockRate = cyclesPerLine * linesPerFrame * framesPerSecond
+    super(machine, clockRate, framesPerSecond, cpuClockScale)
+  }
+
+  public reset(hardReset: boolean) {
+    super.reset(hardReset)
+    this.inVBlank = false
+    this.hasStopped = false
+    this.frameNumber = 0
+    this.lineNumber = 0
+    this.lineCycles = 0
+    if (hardReset) {
+      this.displayView?.setEditMode(false)
+    }
+  }
+
+  public getState(): any {
+    let state: any = {}
+    state.clock = super.getState()
+    state.inVBlank = this.inVBlank
+    state.hasStopped = this.hasStopped
+    state.frameNumber = this.frameNumber
+    state.lineNumber = this.lineNumber
+    state.lineCycles = this.lineCycles
+    return state
+  }
+
+  public setState(state: any) {
+    super.setState(state.clock)
+    this.inVBlank = state.inVBlank
+    this.hasStopped = state.hasStopped
+    this.frameNumber = state.frameNumber
+    this.lineNumber = state.lineNumber
+    this.lineCycles = state.lineCycles
+  }
+
+  public setView(displayView: DisplayView) {
+    this.displayView = displayView
+    // *** apply displayView dimensions from here ***
+  }
+
+  protected updateCycles():
+      { stopReason: string, newFrame: boolean, newLine: boolean } {
+
+    let stopReason = this.checkStops()
+    if (stopReason && stopReason != "vblank") {
+      // TODO: Deal with the issue of a breakpoint hitting
+      //  that is then ignored because the underlying code
+      //  is not loaded or is switched out.
+      this.hasStopped = true
+    }
+
+    let newLine = false
+    let newFrame = false
+    if (this.lineCycles >= this.cyclesPerLine) {
+      this.lineCycles -= this.cyclesPerLine
+      this.lineNumber += 1
+      newLine = true
+
+      if (this.lineNumber == this.visibleLines) {
+
+        // always update display at the start of vblank
+        this.displayView?.update()
+
+        this.inVBlank = true
+        if (!stopReason) {
+          stopReason = "vblank"
+        }
+      } else if (this.lineNumber == this.linesPerFrame) {
+        this.frameNumber += 1
+        this.lineNumber = 0
+        this.inVBlank = false
+        this.hasStopped = false
+        newFrame = true
+      }
+    }
+
+    // update display in mid-frame if we're stopping
+    // *** add stopReason back in? ***
+    if ((this.hasStopped || this.forceUpdate) && !this.inVBlank) {
+      this.displayView?.update()
+    }
+
+    // update audio, disk, etc.
+    this.machine.update(this.clockCycles)
+
+    if (newFrame) {
+      this.machine.snapState(this.frameNumber)
+    }
+
+    return { stopReason, newFrame, newLine }
   }
 }
 

@@ -46,6 +46,9 @@ export class PixelData {
 
 //------------------------------------------------------------------------------
 
+// *** how much of this really needs to be shared? ***
+
+// *** apple specific ***
 export type Joystick = {
   x0: number,
   y0: number,
@@ -66,7 +69,7 @@ export type StackRegister = {
 export type StackEntry = {
   proc: number
   regs: StackRegister[]
-  cycles: number
+  cpuCycles: number
   dataAddress?: number
   dataString?: string
   topOfStack?: boolean
@@ -76,12 +79,31 @@ export type BreakpointEntry = {
   address: number
 }
 
-export interface IMachineInput {
-  setJoystickValues(joystick: Joystick): void
-  setKeyCode(appleCode: number): void
+// export interface IInput {
+//   setJoystickValues(joystick: Joystick): void
+//   setKeyCode(appleCode: number): void
+// }
+
+// *** replicate in other types.ts ***
+export interface IInputEventHandler {
+  setMousePt(mousePt?: Point, lastMousePt?: Point): void
+  // *** apply camel-casing ***
+  onkeydown(e: KeyboardEvent): void
+  onkeyup(e: KeyboardEvent): void
+  onpointerenter(e: PointerEvent, hasFocus: boolean): void
+  onpointerdown(e: PointerEvent, reset: boolean): void
+  onpointermove(e: PointerEvent, hasFocus: boolean): void
+  onpointerup(e: PointerEvent, hasFocus: boolean): void
+  onpointerleave(e: PointerEvent, hasFocus: boolean): void
 }
 
-export interface IMachineDisplay {
+// *** visible/active page is very Apple-specific -- generalize/remove? ***
+export interface IDisplay {
+  // *** cleanup ***
+  setView(view: any): void
+  // *** rename to lookupFormat
+  getFormat(formatName: string): any  // DisplayFormat
+
   getDisplayMode(): string
   getVisibleDisplayPage(): number
   getActiveDisplayPage(): number
@@ -89,15 +111,22 @@ export interface IMachineDisplay {
   setDisplayMemory(frame: PixelData, page: number): void
 }
 
-export interface IMachineMemory {
+export interface IMemory {
+
+  // *** fold into read w/cycleCount == 0 ***
   readConst(address: number): number
+
   read(address: number, cycleCount: number): number
-  readRam(address: number, length: number): Uint8Array
   write(address: number, value: number, cycleCount: number): void
-  writeRam(address: number, data: Uint8Array | number[]): void
+
+  // direct readMemory method for checking binary load status
+  readRange(address: number, length: number): Uint8Array
+
+  // direct writeMemory method for loading project binaries
+  writeRange(address: number, data: Uint8Array | number[]): void
 }
 
-export interface IMachineDevice {
+export interface IDevice {
   reset(hardReset: boolean): void
   readConst(address: number): number
   read(address: number, cycleCount: number): number
@@ -122,7 +151,7 @@ export type OpInfo = {
   opcode: OpcodeDef
 }
 
-export interface IMachineIsa {
+export interface ICpuIsa {
   isBranch(opByte: number): boolean
   isJump(opByte: number): boolean
   isCall(opByte: number): boolean
@@ -133,25 +162,30 @@ export interface ICpuEvents {
   debug: (error?: string) => void
   call: () => void
   return: () => void
+  halt: (cycleCount: number) => number
 }
 
-export interface IMachineCpu {
+export interface ICpu {
   reset(): void
   getPC(): number
-  getCycles(): number
-  nextInstruction(): number
+  nextInstruction(cycleCount: number, cycleScale: number): number
 
   // CPU hook support
   on<K extends keyof ICpuEvents>(event: K, listener: ICpuEvents[K]): void
 
+  // Atari 2600 wsync support
+  requestHalt(): void
+  clearHalt(): void
+  raiseNMI(): void
+
   // debugger support
   setRegister(reg: StackRegister): void
-  getCallStack(): StackEntry[]
+  getCallStack(curCycleCount: number): StackEntry[]
   getRegIndex(opByte: number): number | undefined
   computeAddress(opBytes: number[], useIndex: boolean): OpInfo
   enableCheckStack(enable: boolean): void
 
-  get isa(): IMachineIsa
+  get isa(): ICpuIsa
 }
 
 export interface IClockEvents {
@@ -176,17 +210,25 @@ export interface IClock {
 
   get isRunning(): boolean
 
-  // TODO: getter?
-  getClockRate(): number
+  get rate(): number
+  get cycles(): number
+  get cpuCycles(): number
 }
 
 export interface IMachine {
   reset(hardReset: boolean): void
-  update(cycleCount: number, forceRedraw: boolean): void
+  update(cycleCount: number): void
+
+  snapState(frameNumber: number): void
+  getState(): any
+  flattenState(state: any): Promise<void>
+  setState(state: any): void
 
   get clock(): IClock
-  get memory(): IMachineMemory
-  get cpu(): IMachineCpu
+  get memory(): IMemory
+  get cpu(): ICpu
+  get display(): IDisplay
+  // get input(): IInput
 }
 
 //------------------------------------------------------------------------------

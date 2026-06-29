@@ -1,6 +1,6 @@
 
-import { Point, Size, Rect, PixelData } from "../shared/types"
-import { DisplayFormat, Bitmap } from "./format"
+import { Point, Size, Rect, PixelData } from "../../../shared/types"
+import { DisplayFormat, Bitmap } from "../../../display/format"
 import { LoresColors, TextLoresInterleave } from "./tables"
 import { deinterleave40, deinterleave80 } from "./text"
 

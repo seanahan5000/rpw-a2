@@ -44,26 +44,14 @@
 
 import { IHostHooks } from "../shared/types"
 import { Point, Size, Rect, pointInRect, rectIsEmpty, PixelData } from "../shared/types"
-import { IMachineDisplay } from "../shared/types"
+import { IDisplay } from "../shared/types"
 import { DisplayFormat, Bitmap } from "./format"
 import { Tool, Cursor, ToolCursors } from "./tools"
 import { Polygon, FloodFill, drawMaskEdges, drawEllipse } from "./graphics"
 import { textFromPixels, imageFromText } from "./copy_paste"
 
-import { Text40Format, Text80Format, Font } from "./text"
-import { LoresFormat, DoubleLoresFormat } from "./lores"
-import { HiresFormat, DoubleHiresFormat } from "./hires"
-
-// TODO: this should eventually become part of the machine
-//  or something else platform specific
-export const formatMap = new Map<string, DisplayFormat>([
-  ["text40", new Text40Format()],
-  ["text80", new Text80Format()],
-  ["lores",  new LoresFormat()],
-  ["dlores", new DoubleLoresFormat()],
-  ["hires",  new HiresFormat()],
-  ["dhires", new DoubleHiresFormat()]
-])
+// TODO: generalize
+import { Font } from "../machine/apple/formats/text"
 
 //==============================================================================
 //#region ScreenDisplay
@@ -101,16 +89,9 @@ export class ScreenDisplay {
   public onToolRectChanged?: () => void
   public onColorChanged?: (oldColor: number, newColor: number, isBack: boolean) => void
 
-  constructor(formatName: string, canvas: HTMLCanvasElement) {
+  constructor(format: DisplayFormat, canvas: HTMLCanvasElement) {
 
-    const isMixed = formatName.endsWith(".mixed")
-    // TODO: use isMixed for something
-
-    if (isMixed) {
-      formatName = formatName.substring(0, formatName.length - 6)
-    }
-
-    this.format = formatMap.get(formatName)!
+    this.format = format
     this.canvas = canvas
 
     this.pixelScale = this.format.pixelScale
@@ -254,7 +235,7 @@ export class ScreenDisplay {
 
 class ZoomDisplay extends ScreenDisplay {
 
-  private machineDisplay: IMachineDisplay
+  private machineDisplay: IDisplay
   private pageIndex: number
 
   private zoomData?: ImageData
@@ -274,9 +255,9 @@ class ZoomDisplay extends ScreenDisplay {
   private scrollSize: Size            // pageSize * this.totalScale (displaySize)
   protected windowRect: Rect          // canvas size within scrollSize
 
-  constructor(formatName: string, canvas: HTMLCanvasElement, machineDisplay: IMachineDisplay) {
+  constructor(format: DisplayFormat, canvas: HTMLCanvasElement, machineDisplay: IDisplay) {
 
-    super(formatName, canvas)
+    super(format, canvas)
 
     this.machineDisplay = machineDisplay
     this.pageIndex = 0
@@ -879,8 +860,8 @@ export class PaintDisplay extends ZoomDisplay {
 
   private useTransparent = false
 
-  constructor(formatName: string, canvas: HTMLCanvasElement, machineDisplay: IMachineDisplay) {
-    super(formatName, canvas, machineDisplay)
+  constructor(format: DisplayFormat, canvas: HTMLCanvasElement, machineDisplay: IDisplay) {
+    super(format, canvas, machineDisplay)
   }
 
   public resizeDisplay(newWidth: number, newHeight: number) {

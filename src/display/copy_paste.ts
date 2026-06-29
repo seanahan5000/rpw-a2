@@ -2,8 +2,8 @@
 import { PixelData } from "../shared/types"
 import { DisplayFormat } from "./format"
 
-import { packNaja2 } from "./pack"
-import { unpackNaja1, unpackNaja2, textFromNaja, buildNajaMask } from "./unpack"
+import { packNaja2 } from "../machine/apple/formats/pack"
+import { unpackNaja1, unpackNaja2, textFromNaja, buildNajaMask } from "../machine/apple/formats/unpack"
 // import { SourceDocBuilder } from "./source_builder"
 
 //------------------------------------------------------------------------------

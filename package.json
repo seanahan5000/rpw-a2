@@ -169,6 +169,12 @@
 		],
 		"commands": [
 			{
+				"command": "rpwa2.LaunchEmulator",
+				"title": "Launch supported emulator (default: Apple IIe)"
+			},
+
+
+			{
 				"command": "rpwa2.LaunchEmulatorIIp",
 				"title": "Launch Apple II+ Emulator"
 			},
@@ -176,6 +182,12 @@
 				"command": "rpwa2.LaunchEmulatorIIe",
 				"title": "Launch Apple IIe Emulator"
 			},
+			{
+				"command": "rpwa2.LaunchEmulator7800",
+				"title": "Launch Atari7800 Emulator"
+			},
+
+
 			{
 				"command": "extension.mountApple2FileSystem",
 				"title": "Mount"

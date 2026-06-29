@@ -1,19 +1,23 @@
 
 import * as base64 from 'base64-js'
-import { AppleEmulator, AppleParams, AppleIcon } from "../machine/apple_view"
-import { FileDiskImage } from "../machine/machine"
+import { EmulatorParams, Emulator } from "../machine/machine"
+import { AppleEmulator } from "../machine/apple/apple_view"
+import { AtariEmulator } from "../machine/atari/atari_view"
+import { FileDiskImage, AppleMachine } from "../machine/apple/apple"
 import { DisplayView } from "../display/display_view"
 import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
-import { IMachineDisplay, IHostHooks, PixelData } from "../shared/types"
-import { HiresInterleave, TextLoresInterleave } from "../display/tables"
-import { deinterleave40, deinterleave80 } from "../display/text"
+import { IDisplay, IHostHooks, PixelData } from "../shared/types"
+import { HiresInterleave, TextLoresInterleave } from "../machine/apple/formats/tables"
+import { deinterleave40, deinterleave80 } from "../machine/apple/formats/text"
+import { DisplayFormat } from "../display/format"
+import { appleFormatMap } from "../machine/apple/apple"
 
 // @ts-ignore
 const vscode = acquireVsCodeApi()
 
 //------------------------------------------------------------------------------
 
-class GraphicsView implements IMachineDisplay, IHostHooks {
+class GraphicsView implements IDisplay, IHostHooks {
 
   public display: DisplayView
 
@@ -41,6 +45,13 @@ class GraphicsView implements IMachineDisplay, IHostHooks {
   }
 
   // IMachineDisplay implementation
+
+  public setView(view: any) {
+  }
+
+  public getFormat(formatName: string): DisplayFormat {
+    return appleFormatMap.get(formatName)!
+  }
 
   public getDisplayMode(): string {
     const size = this.graphicsData?.length ?? 0
@@ -136,7 +147,7 @@ class GraphicsView implements IMachineDisplay, IHostHooks {
 
 class Webview {
 
-  private appleEmu?: AppleEmulator
+  private emulator?: Emulator
   private graphicsView?: GraphicsView
 
   constructor(private state?: any) {
@@ -163,20 +174,26 @@ class Webview {
       case "init": {
         const topDiv = <HTMLDivElement>document.querySelector("#top-div")
         if (body.type == "emu") {
-          const params: AppleParams = {
-            machine: body.machine ?? "iie",
+          const params: EmulatorParams = {
             debugPort: body.debugPort ?? 6502,
             stopOnEntry: body.stopOnEntry ?? false,
             saveState: this.state
           }
-          this.appleEmu = new AppleEmulator(topDiv, params, (index: number) => {
-            if (index == AppleIcon.Drive0 || index == AppleIcon.Drive1) {
-              vscode.postMessage({ type: "driveClick", driveIndex: index })
-            } else if (index == AppleIcon.Paint) {
-              // TODO: capture the data here? in AppleView?
-              vscode.postMessage({ type: "snapshot" })
-            }
-          })
+          if (body.machine == "7800") {
+            this.emulator = new AtariEmulator(topDiv, params)
+          } else {
+            params.variant = body.machine ?? "iie"
+            this.emulator = new AppleEmulator(topDiv, params, (type: string) => {
+              if (type == "drive0") {
+                vscode.postMessage({ type: "driveClick", driveIndex: 0 })
+              } else if (type == "drive1") {
+                vscode.postMessage({ type: "driveClick", driveIndex: 1 })
+              } else if (type == "paint") {
+                // TODO: capture the data here? in AppleView?
+                vscode.postMessage({ type: "snapshot" })
+              }
+            })
+          }
         } else {
           const dataBlob = new Blob([ body.value ])
           const dataArray = await dataBlob.arrayBuffer()
@@ -204,9 +221,9 @@ class Webview {
       }
 
       case "saveState": {
-        if (this.appleEmu) {
-          const saveState = this.appleEmu.machine.getState()
-          await this.appleEmu.machine.flattenState(saveState)
+        if (this.emulator) {
+          const saveState = this.emulator.machine.getState()
+          await this.emulator.machine.flattenState(saveState)
           vscode.setState(saveState)
         }
         break
@@ -227,23 +244,25 @@ class Webview {
       }
 
       case "setDiskImage": {
-        if (this.appleEmu && body.dataString) {
-          // TODO: call appleEmu and have it do most of this instead
-          const dataBytes = base64.toByteArray(body.dataString)
-          const onWrite = body.writeProtected ? undefined : (newDataBytes: Uint8Array) => {
-            vscode.postMessage({
-              type: "diskWrite",
-              requestId,
-              body: {
-                fullPath: body.fullPath,
-                dataString: base64.fromByteArray(newDataBytes)
-              }
-            })
+        if (this.emulator && body.dataString) {
+          if (this.emulator.machine instanceof AppleMachine) {
+            // TODO: call appleEmu and have it do most of this instead
+            const dataBytes = base64.toByteArray(body.dataString)
+            const onWrite = body.writeProtected ? undefined : (newDataBytes: Uint8Array) => {
+              vscode.postMessage({
+                type: "diskWrite",
+                requestId,
+                body: {
+                  fullPath: body.fullPath,
+                  dataString: base64.fromByteArray(newDataBytes)
+                }
+              })
+            }
+            const diskImage = new FileDiskImage(body.fullPath, dataBytes, onWrite)
+            const driveIndex = body.driveIndex ?? 0
+            this.emulator.machine.setDiskImage(driveIndex, diskImage)
+            this.emulator.machine.displayGen.displayView.focus()
           }
-          const diskImage = new FileDiskImage(body.fullPath, dataBytes, onWrite)
-          const driveIndex = body.driveIndex ?? 0
-          this.appleEmu.machine.setDiskImage(driveIndex, diskImage)
-          this.appleEmu.machine.display.displayView.focus()
         }
         break
       }
