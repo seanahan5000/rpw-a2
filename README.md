@@ -1,8 +1,8 @@
-This Retro Programmer's Workshop (RPW) extension provides VSCode support for Apple II emulation, graphics file editing, and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for related funtionality.)
+This Retro Programmer's Workshop (RPW) extension provides VSCode support for Apple II and Atari 7800 emulation, graphics file editing, and file system support for ProDOS and DOS 3.3 disk images.  (See the RPW 65 extension for related funtionality.)
 
+New for version 4.0: Atari 7800 hardware emulation.
 New for version 3.0: Apple II+ and IIe hardware emulation.
-
-New for version 2.0: Graphics editor support for double-HIRES and double-LORES graphics and a full suite of pixel editing tools.
+New for version 2.0: Graphics editor support for graphics modes and a full suite of pixel editing tools.
 
 #### Apple II Emulation
 
@@ -20,6 +20,14 @@ New for version 2.0: Graphics editor support for double-HIRES and double-LORES g
 * Mixed text and graphics mode not supported
 * Flashing text not supported
 * Mockingboard support is very limited for now
+
+#### Atari 7800 Emulation
+
+* Full Maria emulation
+* TIA and Pokey audio
+* High score cartridge
+
+<img src="images/rpwa78-emu.gif"/>
 
 #### Debugging with RPW 65 Extension
 

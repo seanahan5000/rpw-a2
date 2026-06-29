@@ -1,10 +1,10 @@
 {
 	"name": "rpwa2",
 	"displayName": "RPW A2",
-	"description": "Apple II emulator, graphics editor, and ProDOS and DOS 3.3 file system providers",
+	"description": "Apple II/Atari 7800 emulator, graphics editor, and ProDOS and DOS 3.3 file system providers",
 	"author": "Sean Callahan",
 	"publisher": "seanahan5000",
-	"version": "3.0.3",
+	"version": "4.0.0",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
@@ -14,11 +14,15 @@
 		"vscode": "^1.74.0"
 	},
 	"categories": [
-		"Visualization","Programming Languages","Debuggers"
+		"Visualization",
+		"Programming Languages",
+		"Debuggers"
 	],
 	"keywords": [
 		"apple",
 		"apple2",
+		"atari",
+		"7800",
 		"filesystem",
 		"prodos",
 		"dos 3.3",
@@ -26,6 +30,7 @@
 		"basic",
 		"assembly",
 		"merlin",
+		"dasm",
 		"lisa",
 		"lores",
 		"hires",
@@ -172,8 +177,6 @@
 				"command": "rpwa2.LaunchEmulator",
 				"title": "Launch supported emulator (default: Apple IIe)"
 			},
-
-
 			{
 				"command": "rpwa2.LaunchEmulatorIIp",
 				"title": "Launch Apple II+ Emulator"
@@ -186,8 +189,6 @@
 				"command": "rpwa2.LaunchEmulator7800",
 				"title": "Launch Atari7800 Emulator"
 			},
-
-
 			{
 				"command": "extension.mountApple2FileSystem",
 				"title": "Mount"
@@ -212,15 +213,15 @@
 		"test-compile": "tsc -p ./"
 	},
 	"devDependencies": {
-		"@types/node": "^16.18.34",
+		"@types/node": "^16.18.126",
 		"@types/vscode": "^1.73.0",
 		"copy-webpack-plugin": "^12.0.2",
 		"ts-loader": "^9.5.1",
-		"typescript": "^5.1.3",
+		"typescript": "^5.9.3",
 		"webpack": "^5.89.0",
 		"webpack-cli": "^5.1.4"
 	},
-  "dependencies": {
-    "base64-js": "^1.5.1"
-  }
+	"dependencies": {
+		"base64-js": "^1.5.1"
+	}
 }
