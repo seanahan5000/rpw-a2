@@ -1,5 +1,5 @@
 
-import { IMachine, IClock, IMemory, ICpu } from "../shared/types"
+import { IMachine, IClock, IMemory, ICpu, DataBreakpointEntry } from "../shared/types"
 import { SocketDebugger } from "./debugger"
 
 export type EmulatorParams = {
@@ -57,6 +57,9 @@ export abstract class Emulator {
 
 //------------------------------------------------------------------------------
 
+// how many seconds of snapped state to maintain
+const StateLengthSec = 10
+
 export abstract class Machine implements IMachine {
 
   abstract reset(hardReset: boolean): void
@@ -93,7 +96,7 @@ export abstract class Machine implements IMachine {
     if (this.curStateIndex < this.states.length) {
       this.states = this.states.slice(0, this.curStateIndex)
     }
-    if (this.states.length >= 60 * 5) {
+    if (this.states.length >= 60 * StateLengthSec) {
       this.states.shift()
       this.curStateIndex -= 1
     }
@@ -148,13 +151,34 @@ export abstract class Machine implements IMachine {
   abstract flattenState(state: any): Promise<void>
   abstract setState(state: any): void
 
-  // disk/cart handling
-
-  abstract setDataImage(
+  abstract setDiskCartImage(
     fullPath: string,
     dataBytes: Uint8Array,
     driveIndex?: number,
     onWrite?: (newDataBytes: Uint8Array) => void): void
+
+  // common data breakpoint handling
+
+  protected dataBreakpoints?: DataBreakpointEntry[]
+
+  public setDataBreakpoints(dataBreakpoints: DataBreakpointEntry[]): void {
+    this.dataBreakpoints = dataBreakpoints
+  }
+
+  public checkDataBreakpoints(address: number, access: number): boolean {
+    if (this.dataBreakpoints) {
+      for (const breakpoint of this.dataBreakpoints) {
+        if (access & breakpoint.access) {
+          if (address >= breakpoint.address) {
+            if (address < breakpoint.address + breakpoint.length) {
+              return true
+            }
+          }
+        }
+      }
+    }
+    return false
+  }
 }
 
 //------------------------------------------------------------------------------

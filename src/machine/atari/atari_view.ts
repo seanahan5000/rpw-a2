@@ -1,5 +1,5 @@
 
-import { AtariMachine } from "./atari"
+import { AtariMachine, Atari2600Format } from "./atari"
 import { DisplayView } from "../../display/display_view"
 import { MachineView, IconView, IconImages } from "../machine_view"
 import * as Views from "../machine_view"
@@ -63,8 +63,6 @@ class CartIconView extends IconView {
 
     this.iconImage.src = AtariIconImages[2]
     this.iconHelp.textContent = "(empty)"
-    // *** show cart name?
-    // *** else, draw name in cart directly
 
     this.enableDragAndDrop(0)
   }
@@ -72,12 +70,14 @@ class CartIconView extends IconView {
   override async onDrop(index: number, e: DragEvent) {
     if (e.dataTransfer) {
       for (const item of Array.from(e.dataTransfer.items)) {
-        const fsHandle = await (item as any).getAsFileSystemHandle()
-        if (fsHandle) {
-          const cart = await this.openCartFile(fsHandle)
+        const file = item.getAsFile()
+        if (file) {
+          const cart = await this.openCartFile(file)
           if (cart) {
             if (this.machine instanceof AtariMachine) {
-              this.machine.setCartImage(cart, true)
+              const fileName = file.name ?? "(unknown)"
+              this.machine.setDiskCartImage(fileName, cart)
+              this.iconHelp.textContent = fileName
             }
             break
           }
@@ -104,10 +104,11 @@ class CartIconView extends IconView {
           }
           const fileList = await obj.showOpenFilePicker(pickerOpts)
           if (fileList.length > 0) {
-            const cart = await this.openCartFile(fileList[0])
+            const cart = await this.openCartFileHandle(fileList[0])
             if (cart) {
               if (this.machine instanceof AtariMachine) {
-                this.machine.setCartImage(cart, true)
+                this.machine.setDiskCartImage(fileList[0].name, cart)
+                this.iconHelp.textContent = fileList[0].name
               }
               return
             }
@@ -120,8 +121,7 @@ class CartIconView extends IconView {
   }
 
   // handle dragged-and-dropped file
-  // *** return cartridge object instead *** (FileCartImage?)
-  private async openCartFile(fsHandle: FileSystemHandle): Promise<Uint8Array | undefined> {
+  private async openCartFileHandle(fsHandle: FileSystemHandle): Promise<Uint8Array | undefined> {
     if (fsHandle.kind == "directory") {
       return
     }
@@ -138,6 +138,21 @@ class CartIconView extends IconView {
       const dataArray = await dataBlob.arrayBuffer()
       const data = new Uint8Array(dataArray)
       return data
+    }
+  }
+
+  private async openCartFile(file: File): Promise<Uint8Array | undefined> {
+    const fileName: string = file.name
+    let suffix = ""
+    const n = fileName.lastIndexOf(".")
+    if (n > 0) {
+      suffix = fileName.substring(n + 1).toLowerCase()
+    }
+    // TODO: other file types?
+    if (suffix == "a78" || suffix == "bin") {
+      if ((file as any).bytes) {
+        return (file as any).bytes()
+      }
     }
   }
 }
@@ -212,7 +227,7 @@ export class AtariEmulator extends Emulator {
 
     super(parent, params)
 
-    const displayView = new DisplayView(this.topDiv, this.atariMachine.displayClock, this.atariInput)
+    const displayView = new DisplayView(this.topDiv, new Atari2600Format(this.atariMachine), this.atariInput)
     this.machine.setView(displayView)
 
     this.atariView = new AtariView(this.topDiv, this.atariMachine, displayView, clickHook)
@@ -230,11 +245,13 @@ export class AtariEmulator extends Emulator {
 
 //------------------------------------------------------------------------------
 
-// Up     Up arrow, Keypad 8              Y
-// Down   Down arrow, Keypad 2            H
-// Left   Left arrow, Keypad 4            G
-// Right  Right arrow, Keypad 6           J
-// Fire   Left Control, Space, Keypad 5   F
+// TODO: redo these to match JS7800 key mapping
+
+// Up     Up arrow,               Keypad 8   Y
+// Down   Down arrow,             Keypad 2   H
+// Left   Left arrow,             Keypad 4   G
+// Right  Right arrow,            Keypad 6   J
+// Fire   Left Control, Space,    Keypad 5   F
 
 // Paddle A Turn Left   Left arrow                      G
 // Paddle A Turn Right  Right arrow                     J
@@ -273,6 +290,7 @@ class AtariInput implements IInputEventHandler {
         case "4":   // BW
           switches &= ~0x08
           break
+        // TODO: pause for 7800
         case "5":   // left difficulty A
           switches &= ~0x40
           break

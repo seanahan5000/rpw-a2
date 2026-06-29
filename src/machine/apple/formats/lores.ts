@@ -1,12 +1,13 @@
 
 import { Point, Size, Rect, PixelData } from "../../../shared/types"
-import { DisplayFormat, Bitmap } from "../../../display/format"
+import { ColorPattern, DisplayFormat, Bitmap } from "../../../display/format"
 import { LoresColors, TextLoresInterleave } from "./tables"
 import { deinterleave40, deinterleave80 } from "./text"
+import { AppleDisplayFormat } from "./base"
 
 //------------------------------------------------------------------------------
 
-export class LoresFormat extends DisplayFormat {
+export class LoresFormat extends AppleDisplayFormat {
 
   public get name(): string {
     return "lores"
@@ -24,9 +25,13 @@ export class LoresFormat extends DisplayFormat {
     return { x: 14, y: 8 }
   }
 
-  public get alignment(): Point {
+  public get alignmentX(): number {
+    return 0
+  }
+
+  public get alignmentY(): number | number[] {
     // TODO: consider y:2 alignment?
-    return { x: 0, y: 0 }
+    return 0
   }
 
   public calcPixelWidth(byteWidth: number) {
@@ -53,7 +58,7 @@ export class LoresFormat extends DisplayFormat {
     return new LoresBitmap(src, this)
   }
 
-  public get colorCount(): number {
+  public get patternCount(): number {
     return LoresColors.length
   }
 
@@ -61,8 +66,8 @@ export class LoresFormat extends DisplayFormat {
     return LoresColors[index]
   }
 
-  public getColorPattern(index: number): number[][] {
-    return [[index]]
+  public getColorPattern(index: number): ColorPattern {
+    return { values: [[index]] }
   }
 
   public get altModes(): number {

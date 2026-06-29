@@ -1,7 +1,10 @@
 import * as base64 from 'base64-js'
 import { Point, Size, Rect, PixelData } from "../../../shared/types"
-import { DisplayFormat, Bitmap } from "../../../display/format"
+import { ColorPattern, DisplayFormat, Bitmap } from "../../../display/format"
 import { TextLoresInterleave, HGR_BLACK_RGB, HGR_WHITE_RGB } from "./tables"
+
+import { AppleDisplayFormat } from "./base"
+import { AppleMachine } from '../apple'
 
 //------------------------------------------------------------------------------
 
@@ -35,13 +38,13 @@ export function deinterleave80(inData: Uint8Array, outData: PixelData, interleav
 
 //------------------------------------------------------------------------------
 
-export class Text40Format extends DisplayFormat {
+export class Text40Format extends AppleDisplayFormat {
 
   private fontVariant: string = "a2e"
   protected font?: Font
 
-  constructor() {
-    super()
+  constructor(apple?: AppleMachine) {
+    super(apple)
   }
 
   public setFontVariant(fontVariant: string) {
@@ -65,8 +68,12 @@ export class Text40Format extends DisplayFormat {
     return { x: 14, y: 16 }
   }
 
-  public get alignment(): Point {
-    return { x: 0, y: 0 }
+  public get alignmentX(): number {
+    return 0
+  }
+
+  public get alignmentY(): number | number[] {
+    return 0
   }
 
   public calcPixelWidth(byteWidth: number) {
@@ -93,7 +100,7 @@ export class Text40Format extends DisplayFormat {
     return new TextBitmap(src, this)
   }
 
-  public get colorCount(): number {
+  public get patternCount(): number {
     return 2
   }
 
@@ -105,11 +112,11 @@ export class Text40Format extends DisplayFormat {
     }
   }
 
-  public getColorPattern(index: number): number[][] {
+  public getColorPattern(index: number): ColorPattern {
     if (index == 0) {
-      return [[0xA0]]   // space character
+      return { values: [[0xA0]] } // space character
     } else {
-      return [[0x20]]   // inverted space character
+      return { values: [[0x20]] } // inverted space character
     }
   }
 

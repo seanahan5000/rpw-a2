@@ -1,5 +1,7 @@
 
 import { Point, Size, Rect, PixelData } from "../shared/types"
+import { CoordinateInfo } from "./display"
+import { Tool } from "./tools"
 
 //------------------------------------------------------------------------------
 
@@ -20,13 +22,19 @@ import { Point, Size, Rect, PixelData } from "../shared/types"
 // this.displaySize = { width: 640, height: 384 } // Atari 2600
 // this.displaySize = { width: 640, height: 480 } // Atari 7800
 
+export type ColorPattern = {
+  values: number[][]
+  name?: string
+}
+
 export abstract class DisplayFormat {
 
   public abstract get name(): string
   public abstract get frameSize(): Size
   public abstract get displaySize(): Size
   public abstract get pixelScale(): Point
-  public abstract get alignment(): Point
+  public abstract get alignmentX(): number
+  public abstract get alignmentY(): number | number[]
 
   public abstract calcPixelWidth(byteWidth: number): number
   public abstract calcByteWidth(pixelX: number, pixelWidth: number): number
@@ -47,9 +55,9 @@ export abstract class DisplayFormat {
     return { main: mainBuffer, alt: mainBuffer }
   }
 
-  public abstract get colorCount(): number
+  public abstract get patternCount(): number
   public abstract getColorValueRgb(index: number): number
-  public abstract getColorPattern(index: number): number[][]
+  public abstract getColorPattern(patternIndex: number): ColorPattern
 
   public abstract get altModes(): number
   public abstract colorize(srcBitmap: Bitmap, yTop: number, yBot: number, altMode: number, colorMain: Uint32Array, colorAlt: Uint32Array): void
@@ -85,6 +93,10 @@ export abstract class DisplayFormat {
     const bitmap = this.createBitmap(pixelData.bounds)
     bitmap.decode(pixelData)
     return bitmap
+  }
+
+  public getDisplayInfo(coordInfo: CoordinateInfo, tool: Tool, defaultStr: string): string {
+    return defaultStr
   }
 }
 
@@ -166,18 +178,18 @@ export abstract class Bitmap {
   }
 
   public getColorAt(pt: Point) : number | undefined {
-    const patWidth = this.format.getColorPattern(0)[0].length
+    const patWidth = this.format.getColorPattern(0).values[0].length
     const pattern = new Array(patWidth)
     const sx = pt.x - (pt.x % pattern.length)
     for (let i = 0; i < patWidth; i += 1) {
       pattern[i] = this.getPixelAt({x: sx + i, y: pt.y})!
     }
     let fillColor: number | undefined
-    for (let i = 0; i < this.format.colorCount; i += 1) {
+    for (let i = 0; i < this.format.patternCount; i += 1) {
       const colorPat = this.format.getColorPattern(i)
       let matched = true
       for (let j = 0; j < pattern.length; j += 1) {
-        if (pattern[j] != colorPat[0][j]) {
+        if (pattern[j] != colorPat.values[0][j]) {
           matched = false
           break
         }
@@ -193,9 +205,9 @@ export abstract class Bitmap {
   public fillRect(rect: Rect, foreColor: number, mask?: Bitmap, parity: boolean = true) {
     const r = this.clipRect(rect)
     if (r.width != 0 && r.height != 0) {
-      const pattern = this.format.getColorPattern(foreColor)
-      const patHeight = pattern.length
-      const patWidth = pattern[0].length
+      const pattern: ColorPattern = this.format.getColorPattern(foreColor)
+      const patHeight = pattern.values.length
+      const patWidth = pattern.values[0].length
       let patX = (r.x + this.x) % patWidth
       let patY = (r.y + this.y) % patHeight
       let offset = r.y * this.stride + r.x
@@ -205,7 +217,7 @@ export abstract class Bitmap {
         if (mask) {
           for (let x = 0; x < r.width; x += 1) {
             if ((mask.data[maskOffset + x] != 0) == parity) {
-              this.data[offset + x] = pattern[patY][px]
+              this.data[offset + x] = pattern.values[patY][px]
             }
             if (++px == patWidth) {
               px = 0
@@ -213,7 +225,7 @@ export abstract class Bitmap {
           }
         } else {
           for (let x = 0; x < r.width; x += 1) {
-            this.data[offset + x] = pattern[patY][px]
+            this.data[offset + x] = pattern.values[patY][px]
             if (++px == patWidth) {
               px = 0
             }
@@ -295,9 +307,9 @@ export abstract class Bitmap {
     const mask = this.format.createBitmap({ x: 0, y: 0, ...this.size })
     mask.data.fill(0x7F)
 
-    const pattern = this.format.getColorPattern(backColor)
-    const patHeight = pattern.length
-    const patWidth = pattern[0].length
+    const pattern: ColorPattern = this.format.getColorPattern(backColor)
+    const patHeight = pattern.values.length
+    const patWidth = pattern.values[0].length
     let patX = (0 + this.x) % patWidth
     let patY = (0 + this.y) % patHeight
     let offset = 0
@@ -307,7 +319,7 @@ export abstract class Bitmap {
       let pc = 0
 
       for (let x = 0; x < this.width; x += 1) {
-        if (this.data[offset + x] == pattern[patY][px]) {
+        if (this.data[offset + x] == pattern.values[patY][px]) {
           pc += 1
         } else {
           if (pc >= patWidth || x - pc == 0) {
@@ -469,16 +481,16 @@ export abstract class Bitmap {
   }
 
   public xorColor(foreColor: number) {
-    const pattern = this.format.getColorPattern(foreColor)
-    const patHeight = pattern.length
-    const patWidth = pattern[0].length
+    const pattern: ColorPattern = this.format.getColorPattern(foreColor)
+    const patHeight = pattern.values.length
+    const patWidth = pattern.values[0].length
     let patX = (0 + this.x) % patWidth
     let patY = (0 + this.y) % patHeight
     let offset = 0
     for (let y = 0; y < this.height; y += 1) {
       let px = patX
       for (let x = 0; x < this.width; x += 1) {
-        this.data[offset + x] ^= pattern[patY][px]
+        this.data[offset + x] ^= pattern.values[patY][px]
         px += 1
         if (px == patWidth) {
           px = 0

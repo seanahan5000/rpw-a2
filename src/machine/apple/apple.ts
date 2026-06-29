@@ -2,16 +2,15 @@
 import * as base64 from 'base64-js'
 import { HiresInterleave, TextLoresInterleave } from "./formats/tables"
 import { DiskImage } from "../../filesys/disk_image"
-import { IMachine, IClock, IDevice, IDisplay, IMemory } from "../../shared/types"
+import { IClock, IDevice, IMemory } from "../../shared/types"
 import { Joystick, PixelData } from "../../shared/types"
-import { Clock } from "../clock"
+import { DisplayFormat, Bitmap } from "../../display/format"
+import { Machine, base64FromUint8 } from "../machine"
+import { DisplayClock } from "../clock"
 import { Cpu65xx } from "../cpu65xx"
 import { Isa6502 } from "../isa65xx"
 import { ICpu } from "../../shared/types"
 import { a2pApplesoft, a2pMonitor, a2eMonitor, a2e80Col_C100, a2e80Col_C800 } from "./roms"
-
-// *** bring back in ***
-import { AppleDisplayClock } from "../clock"
 
 export enum Apple {
   II   = 0,
@@ -28,40 +27,6 @@ export enum Apple {
 
 // To enable audio in Chrome, click on info icon next to URL, choose
 //  Site Settings, Privacy and Security, Sound, Allow, and then refresh the page.
-
-//------------------------------------------------------------------------------
-
-import { DisplayFormat } from "../../display/format"
-import { Text40Format, Text80Format } from "./formats/text"
-import { LoresFormat, DoubleLoresFormat } from "./formats/lores"
-import { HiresFormat, DoubleHiresFormat } from "./formats/hires"
-
-// TODO: make this a method on the Machine or IMachineDisplay
-export const appleFormatMap = new Map<string, DisplayFormat>([
-  ["text40", new Text40Format()],
-  ["text80", new Text80Format()],
-  ["lores",  new LoresFormat()],
-  ["dlores", new DoubleLoresFormat()],
-  ["hires",  new HiresFormat()],
-  ["dhires", new DoubleHiresFormat()]
-])
-
-//------------------------------------------------------------------------------
-
-async function base64FromUint8(uint8: Uint8Array): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const blob = new Blob([uint8.buffer as ArrayBuffer])
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const dataUrl = <string>reader.result
-      // Remove 'data:application/octet-stream;base64,'
-      const base64 = dataUrl.split(',')[1]
-      resolve(base64)
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}
 
 //------------------------------------------------------------------------------
 
@@ -144,20 +109,19 @@ const CyclesPerFrame = CyclesPerScanline * NTSCScanLines  // 17030
 const FramesPerSecond = 60
 const CyclesPerSecond = CyclesPerFrame * FramesPerSecond
 
-export class AppleMachine implements IMachine, IDisplay, IMemory {
+export class AppleMachine extends Machine implements IMemory {
 
   private ram: Uint8Array
   private rom: Uint8Array
 
   private type: Apple
-  private displayClock: AppleDisplayClock
+  public displayClock: AppleDisplayClock
   private _cpu: Cpu65xx
   private isa6502: Isa6502    // TODO: get rid of
   private slots: IDevice[]
 
   public disk2Card: Disk2Card
   public speaker: SpeakerDevice
-  // public displayGen: DisplayGenerator
 
   // language card settings
   private highRamWrite = false
@@ -182,8 +146,8 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
   private mixedGraphics = 0
   private hiresGraphics = 0
   private doubleGraphics = 0
-  private visibleDisplayPage = 0
-  private activeDisplayPage = 0
+  public visibleDisplayPage = 0
+  public activeDisplayPage = 0
 
   // input settings
   private keyLatch = 0
@@ -191,12 +155,13 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
   private paddleValues: number[]
   private paddleTimes: number[]
 
-  // state recording
-  private curStateIndex: number = 0
-  private states: any[] = []
+  // *** state recording
+  protected curStateIndex: number = 0
+  protected states: any[] = []
 
   // TODO: require a type?
   constructor(type: Apple = Apple.IIe) {
+    super()
 
     this.type = type
     this.ram = new Uint8Array(0x10000 * 2).fill(0xEE)
@@ -209,10 +174,6 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     if (this.type <= Apple.IIp) {
       const monitor = base64.toByteArray(a2pMonitor.join(""))
       this.rom.set(monitor, 0xF800 - 0xC000)
-
-      const format = <Text40Format>appleFormatMap.get("text40")
-      format.setFontVariant("a2p")    // *** JSON case? else? ***
-
     } else if (this.type == Apple.IIe) {
       const monitor = base64.toByteArray(a2eMonitor.join(""))
       this.rom.set(monitor, 0xF800 - 0xC000)
@@ -237,83 +198,19 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     // NOTE: this.displayClock must be created after this._cpu
     this.displayClock = new AppleDisplayClock(this)
 
+    this.displayClock.on("start", () => {
+      this.trimStates()
+    })
+
     this.speaker = new SpeakerDevice()
     this.slots = new Array(8)
     this.disk2Card = new Disk2Card()
     this.slots[6] = this.disk2Card
-
-    // this._clock.on("start", () => {
-    //   this.trimStates()
-    // })
   }
 
   //--------------------------------------------------------
   // MARK: State
   //--------------------------------------------------------
-
-  public snapState(frameNumber: number) {
-    if ((frameNumber % 60) == 0) {
-      this.trimStates()
-      this.states.push(this.getState())
-      this.curStateIndex += 1
-    }
-  }
-
-  public getStateInfo() {
-    return {
-      index: this.curStateIndex,
-      count: this.states.length
-    }
-  }
-
-  private trimStates() {
-    if (this.curStateIndex < this.states.length) {
-      this.states = this.states.slice(0, this.curStateIndex)
-    }
-    if (this.states.length >= 60) {
-      this.states.shift()
-      this.curStateIndex -= 1
-    }
-  }
-
-  private clearStates() {
-    this.states = []
-    this.curStateIndex = 0
-  }
-
-  public advanceState(forward: boolean, toEnd: boolean): boolean {
-    let changed = false
-    if (forward) {
-      if (this.curStateIndex < this.states.length) {
-        if (toEnd) {
-          this.curStateIndex = this.states.length
-          this.setState(this.states[this.curStateIndex - 1])
-        } else {
-          this.setState(this.states[this.curStateIndex++])
-        }
-        changed = true
-      }
-    } else {
-      if (this.curStateIndex > 0) {
-        if (this.curStateIndex == this.states.length) {
-          const lastState = this.states[this.states.length - 1]
-          // *** make this work again ***
-          // if (lastState.cpu.cycles != this._cpu.cycles) {
-          //   this.states.push(this.getState())
-          //   this.curStateIndex += 1
-          // }
-        }
-        if (toEnd) {
-          this.curStateIndex = 0
-          this.setState(this.states[this.curStateIndex])
-        } else {
-          this.setState(this.states[--this.curStateIndex])
-        }
-        changed = true
-      }
-    }
-    return changed
-  }
 
   public getState(): any {
     let state: any = {}
@@ -348,9 +245,10 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     state.paddleValues = [...this.paddleValues]
     state.paddleTimes = [...this.paddleTimes]
 
+    state.displayClock = this.displayClock.getState()
+    // state.display = this.displayGen.getStateDisplay()  // *** clock
     state.cpu = this._cpu.getStateCpu()
     state.speaker = this.speaker.getStateSpeaker()
-    // state.display = this.displayGen.getStateDisplay()  // *** clock
     state.disk2Card = this.disk2Card.getStateDisk2Card()
     return state
   }
@@ -360,9 +258,9 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
       state.ramString = await base64FromUint8(state.ramBytes)
       delete state.ramBytes
     }
+    await this.displayClock.flattenState(state.displayClock)
     await this._cpu.flattenState(state.cpu)
     await this.speaker.flattenState(state.speaker)
-    // await this.displayGen.flattenState(state.display)  // *** clock
     await this.disk2Card.flattenState(state.disk2Card)
   }
 
@@ -406,9 +304,9 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     this.paddleValues = [...state.paddleValues]
     this.paddleTimes = [...state.paddleTimes]
 
+    this.displayClock.setState(state.displayClock)
     this._cpu.setState(state.cpu)
     this.speaker.setState(state.speaker)
-    // this.displayGen.setState(state.display)  // *** clock
     this.disk2Card.setState(state.disk2Card)
 
     // this.displayGen.update(this._cpu.cycles, true)
@@ -476,17 +374,13 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     return this
   }
 
-  public get display(): IDisplay {
-    return this
-  }
-
   // TODO: get rid of (currently used by disasm.ts)
   public getIsa(): Isa6502 {
     return this.isa6502
   }
 
   // NOTE: called for every CPU instruction
-  public update(cycleCount: number, forceRedraw: boolean) {
+  public update(cycleCount: number) {
     // const newVblank = this.displayGen.update(cycleCount, forceRedraw)
 
     this.speaker.update(cycleCount)
@@ -498,8 +392,6 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     // }
   }
 
-  // *** misc
-
   public get soundEnabled(): boolean {
     return this.speaker.isEnabled
   }
@@ -508,14 +400,8 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     this.speaker.isEnabled = enabled
   }
 
-  // IDisplay implementation
-
   public setView(displayView: any) {
     this.displayClock.setView(displayView)
-  }
-
-  public getFormat(formatName: string): DisplayFormat {
-    return appleFormatMap.get(formatName)!
   }
 
   public getDisplayMode(): string {
@@ -536,6 +422,58 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
         return this.mixedGraphics ? "dlores.mixed" : "dlores"
       } else {
         return this.mixedGraphics ? "lores.mixed" : "lores"
+      }
+    }
+  }
+
+  public getDisplayFormat(): DisplayFormat {
+    if (this.textMode) {
+      if (this.column80Mode) {
+        return new Text80Format(this)
+      } else {
+        const format = new Text40Format()
+        if (this.type <= Apple.IIp) {
+          format.setFontVariant("a2p")
+        }
+        return format
+      }
+    } else if (this.hiresGraphics) {
+      if (this.column80Mode && this.doubleGraphics) {
+        return new DoubleHiresFormat(this)
+      } else {
+        return new HiresFormat(this)
+      }
+    } else {
+      if (this.column80Mode && this.doubleGraphics) {
+        return new DoubleLoresFormat(this)
+      } else {
+        return new LoresFormat(this)
+      }
+    }
+  }
+
+  public getMixedFormat(): DisplayFormat | undefined {
+    if (this.textMode) {
+      return undefined
+    } else if (this.hiresGraphics) {
+      if (this.column80Mode && this.doubleGraphics) {
+        return this.mixedGraphics ? new Text80Format(this) : undefined
+      } else {
+        const format = this.mixedGraphics ? new Text40Format() : undefined
+        if (format && this.type <= Apple.IIp) {
+          format.setFontVariant("a2p")
+        }
+        return format
+      }
+    } else {
+      if (this.column80Mode && this.doubleGraphics) {
+        return this.mixedGraphics ? new Text80Format(this) : undefined
+      } else {
+        const format = this.mixedGraphics ? new Text40Format() : undefined
+        if (format && this.type <= Apple.IIp) {
+          format.setFontVariant("a2p")
+        }
+        return format
       }
     }
   }
@@ -675,6 +613,11 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
   }
 
   public read(address: number, cycleCount: number): number {
+    if (cycleCount) {
+      if (this.checkDataBreakpoints(address, 1)) {
+        this.clock.stop("dataBreakpoint")
+      }
+    }
     if (address < 0x200) {
       return this.ram[address + this.altZpOffset]
     }
@@ -764,6 +707,11 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
   }
 
   public write(address: number, value: number, cycleCount: number) {
+    if (cycleCount) {
+      if (this.checkDataBreakpoints(address, 2)) {
+        this.clock.stop("dataBreakpoint")
+      }
+    }
     if (address < 0x200) {
       this.ram[address + this.altZpOffset] = value
     } else if (address < 0xc000) {
@@ -1080,17 +1028,15 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
     }
   }
 
-  setDiskImage(driveIndex: number, image: FileDiskImage | undefined) {
-    this.clearStates()
-    this.disk2Card.setImage(driveIndex, image)
-  }
+  public setDiskCartImage(
+      fullPath: string,
+      dataBytes: Uint8Array,
+      driveIndex: number,
+      onWrite?: (newDataBytes: Uint8Array) => void) {
 
-  getVisibleDisplayPage(): number {
-    return this.visibleDisplayPage
-  }
-
-  getActiveDisplayPage(): number {
-    return this.activeDisplayPage
+    const diskImage = new FileDiskImage(fullPath, dataBytes, onWrite)
+    // *** this.clearStates()
+    this.disk2Card.setImage(driveIndex, diskImage)
   }
 
   // TODO: hasn't been tested since CPU rewrite
@@ -1121,64 +1067,117 @@ export class AppleMachine implements IMachine, IDisplay, IMemory {
 //------------------------------------------------------------------------------
 // MARK: Display
 
-// *** generalize -- not just Apple II ***
+export enum DisplaySource {
+  Visible   = 0,
+  Active    = 1,
+  Primary   = 2,
+  Secondary = 3,
+}
 
-// *** make this a wrapper on/part of DisplayView ? ***
-// class DisplayGenerator {
+import { DoubleHiresFormat, HiresFormat } from "./formats/hires"
+import { Text40Format, Text80Format } from "./formats/text"
+import { DoubleLoresFormat, LoresFormat } from "./formats/lores"
 
-//   public frameNumber = 0
-//   private frameStartCycle = 0
-//   private isInVBlank?: boolean
-//   public displayView?: any   // *** make this an interface ***
+class AppleDisplayClock extends DisplayClock {
 
-//   public reset(hardReset: boolean) {
-//     this.frameNumber = 0
-//     this.frameStartCycle = 0
-//     this.isInVBlank = undefined
-//     if (hardReset && this.displayView) {
-//       this.displayView.setEditMode(false)
-//     }
-//   }
+  private appleMachine: AppleMachine
+  private sourceListener?: (source: DisplaySource, isPaged: boolean, pageIndex: number) => void
+  private displaySource = DisplaySource.Visible
+  private displayMode = ""
+  private displayPixelData!: PixelData
+  private displayBitmap!: Bitmap
+  private mixedPixelData?: PixelData
+  private mixedBitmap?: Bitmap
 
-//   public update(cycleCount: number, forceRedraw: boolean): boolean {
-//     let frameCycles = cycleCount - this.frameStartCycle
-//     if (frameCycles >= CyclesPerFrame) {
-//       frameCycles -= CyclesPerFrame
-//       this.frameStartCycle = cycleCount - frameCycles
-//     }
-//     const wasInVBlank = this.isInVBlank
-//     this.isInVBlank = frameCycles >= NTCSActiveCycles
-//     const newVBlank = (this.isInVBlank && !wasInVBlank)
-//     if (newVBlank || forceRedraw || wasInVBlank == undefined) {
-//       this.displayView?.update()
-//     }
-//     if (newVBlank) {
-//       this.frameNumber += 1
-//     }
-//     return newVBlank
-//   }
+  constructor(machine: AppleMachine) {
+    super(machine, 65, 192, 262, 60, 1)
+    this.appleMachine = machine
+  }
 
-//   public inVBlank(cycleCount: number): boolean {
-//     this.update(cycleCount, false)
-//     return this.isInVBlank ?? false
-//   }
+  protected advanceClock(): string {
+    let stopReason = ""
+    do {
+      const cycleDelta = this.oneInstruction()
+      this.lineCycles += cycleDelta
+      const result = this.updateCycles()
+      stopReason = result.stopReason
+    } while (!stopReason)
+    return stopReason
+  }
 
-//   public getStateDisplay(): any {
-//     let state: any = {}
-//     state.frameNumber = this.frameNumber
-//     state.frameStartCycle = this.frameStartCycle
-//     return state
-//   }
+  public async flattenState(state: any) {
+    // *** nothing to flatten yet
+  }
 
-//   public flattenState(state: any) {
-//   }
+  // called by updateCycles
+  protected override updateDisplay(partial: boolean = false) {
 
-//   public setState(state: any) {
-//     this.frameNumber = state.frameNumber
-//     this.frameStartCycle = state.frameStartCycle
-//     this.isInVBlank = undefined
-//   }
-// }
+    const displayMode = this.appleMachine.getDisplayMode()
+    if (displayMode != this.displayMode) {
+      this.displayMode = displayMode
+
+      const displayFormat = this.appleMachine.getDisplayFormat()
+      this.displayPixelData = displayFormat.createFramePixelData()
+      this.displayBitmap = displayFormat.createFrameBitmap()
+
+      const mixedFormat = this.appleMachine.getMixedFormat()
+      this.mixedPixelData = mixedFormat?.createFramePixelData()
+      this.mixedBitmap = mixedFormat?.createFrameBitmap()
+    }
+
+    this.appleMachine.getDisplayMemory(this.displayPixelData, this.getPageIndex())
+    this.displayBitmap.decode(this.displayPixelData)
+    if (this.mixedPixelData) {
+      this.appleMachine.getDisplayMemory(this.mixedPixelData, this.getPageIndex())
+      this.mixedBitmap!.decode(this.mixedPixelData)
+    }
+
+    this.displayView?.setFrame(this.displayBitmap, this.mixedBitmap,
+      (frame: Bitmap, altFrame?: Bitmap) => {
+        this.displayPixelData = frame.encode()
+        this.appleMachine.setDisplayMemory(this.displayPixelData, this.getPageIndex())
+      }
+    )
+  }
+
+  public setDisplaySource(displaySource: DisplaySource) {
+    this.displaySource = displaySource
+    this.onSourceChanged()
+    this.updateDisplay()
+  }
+
+  public setSourceListener(listener: (source: DisplaySource, isPaged: boolean, pageIndex: number) => void) {
+    this.sourceListener = listener
+    this.onSourceChanged()
+  }
+
+  private onSourceChanged() {
+    if (this.sourceListener) {
+      this.sourceListener(this.displaySource, this.isPagedFormat(), this.getPageIndex())
+    }
+  }
+
+  private isPagedFormat(): boolean {
+    const formatName = this.displayBitmap?.format.name ?? ""
+    return formatName == "text40" ||
+      formatName.startsWith("lores") ||
+      formatName.startsWith("hires")
+  }
+
+  public getPageIndex(): number {
+    if (this.displaySource == DisplaySource.Primary) {
+      return 0
+    } else if (this.displaySource == DisplaySource.Secondary) {
+      return 1
+    } else if (this.displaySource == DisplaySource.Visible) {
+      return this.appleMachine.visibleDisplayPage
+    } else if (this.displaySource == DisplaySource.Active) {
+      return this.appleMachine.activeDisplayPage
+    } else {
+      return 0
+    }
+  }
+}
 
 //------------------------------------------------------------------------------
 // MARK: Speaker

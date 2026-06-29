@@ -623,8 +623,8 @@ export class EmulatorPanel {
         }
       } else if (e.type == "driveClick") {
         this.onDriveClick(e.driveIndex ?? 0)
-      } else if (e.type == "diskWrite") {
-        this.onDiskWrite(e.body.fullPath, e.body.dataString)
+      } else if (e.type == "dataWrite") {
+        this.onDataWrite(e.body.fullPath, e.body.dataString)
       } else if (e.type == "snapshot") {
         // TODO: capture screen and edit?
       }
@@ -632,17 +632,18 @@ export class EmulatorPanel {
   }
 
   private async onDriveClick(driveIndex: number) {
+    const isCart = driveIndex < 0
     const uri = await vscode.window.showOpenDialog({
       canSelectMany: false,
-      openLabel: 'Open Disk',
+      openLabel: `Open ${isCart ? 'Cartridge' : 'Disk'} Image`,
       filters: {
-        'Text files': ["dsk", "do", "po", "nib", "2mg"],
+        'Image files': isCart ? ["a78", "bin"] : ["dsk", "do", "po", "nib", "2mg"],
         'All files': ['*']
       }
     })
     if (uri && uri[0]) {
       const dataBytes = await vscode.workspace.fs.readFile(uri[0])
-      this.panel.webview.postMessage({ type: "setDiskImage", body: {
+      this.panel.webview.postMessage({ type: "setDataImage", body: {
         fullPath: uri[0].fsPath,
         dataString: base64.fromByteArray(dataBytes),
         driveIndex,
@@ -651,7 +652,7 @@ export class EmulatorPanel {
     }
   }
 
-  private async onDiskWrite(fullPath: string, dataString: string) {
+  private async onDataWrite(fullPath: string, dataString: string) {
     const uri = vscode.Uri.file(fullPath)
     const dataBytes = base64.toByteArray(dataString)
     await vscode.workspace.fs.writeFile(uri, dataBytes)

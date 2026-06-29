@@ -37,7 +37,7 @@ export abstract class Clock implements IClock {
   protected runTimerId?: NodeJS.Timeout
   protected nextRunTimeMs = 0
 
-  protected stopRequested = false
+  protected stopRequested = ""
   protected stepMode = StepMode.None
   protected stepDepth = 0
   protected stepBreak = -1
@@ -49,7 +49,7 @@ export abstract class Clock implements IClock {
     this.machine = machine
 
     this.machine.cpu.on("debug", (error?: string) => {
-      this.stopRequested = true
+      this.stopRequested = "requested"
       if (error) {
         this.emit("error", error)
       }
@@ -105,7 +105,7 @@ export abstract class Clock implements IClock {
   }
 
   public stop(reason?: string) {
-    this.stopRequested = false
+    this.stopRequested = ""
     if (this.runTimerId) {
       clearTimeout(this.runTimerId)
       this.runTimerId = undefined
@@ -164,8 +164,8 @@ export abstract class Clock implements IClock {
     let stopReason = ""
 
     if (this.stopRequested) {
-      stopReason = "requested"
-      this.stopRequested = false
+      stopReason = this.stopRequested
+      this.stopRequested = ""
     }
 
     const pc = this.machine.cpu.getPC()
@@ -270,12 +270,10 @@ import { DisplayView } from "../display/display_view"
 export abstract class DisplayClock extends Clock {
 
   public inVBlank: boolean = false
-  protected hasStopped: boolean = false
-  protected forceUpdate: boolean = false
   protected frameNumber: number = 0
   protected lineNumber: number = 0
   protected lineCycles: number = 0
-  protected displayView?: DisplayView
+  protected displayView?: DisplayView   // ***
 
   constructor(
       machine: IMachine,
@@ -292,7 +290,6 @@ export abstract class DisplayClock extends Clock {
   public reset(hardReset: boolean) {
     super.reset(hardReset)
     this.inVBlank = false
-    this.hasStopped = false
     this.frameNumber = 0
     this.lineNumber = 0
     this.lineCycles = 0
@@ -305,7 +302,6 @@ export abstract class DisplayClock extends Clock {
     let state: any = {}
     state.clock = super.getState()
     state.inVBlank = this.inVBlank
-    state.hasStopped = this.hasStopped
     state.frameNumber = this.frameNumber
     state.lineNumber = this.lineNumber
     state.lineCycles = this.lineCycles
@@ -315,7 +311,6 @@ export abstract class DisplayClock extends Clock {
   public setState(state: any) {
     super.setState(state.clock)
     this.inVBlank = state.inVBlank
-    this.hasStopped = state.hasStopped
     this.frameNumber = state.frameNumber
     this.lineNumber = state.lineNumber
     this.lineCycles = state.lineCycles
@@ -323,19 +318,13 @@ export abstract class DisplayClock extends Clock {
 
   public setView(displayView: DisplayView) {
     this.displayView = displayView
-    // *** apply displayView dimensions from here ***
+    // TODO: apply displayView dimensions from here?
   }
 
   protected updateCycles():
       { stopReason: string, newFrame: boolean, newLine: boolean } {
 
     let stopReason = this.checkStops()
-    if (stopReason && stopReason != "vblank") {
-      // TODO: Deal with the issue of a breakpoint hitting
-      //  that is then ignored because the underlying code
-      //  is not loaded or is switched out.
-      this.hasStopped = true
-    }
 
     let newLine = false
     let newFrame = false
@@ -347,7 +336,7 @@ export abstract class DisplayClock extends Clock {
       if (this.lineNumber == this.visibleLines) {
 
         // always update display at the start of vblank
-        this.displayView?.update()
+        this.updateDisplay(false)
 
         this.inVBlank = true
         if (!stopReason) {
@@ -357,15 +346,15 @@ export abstract class DisplayClock extends Clock {
         this.frameNumber += 1
         this.lineNumber = 0
         this.inVBlank = false
-        this.hasStopped = false
         newFrame = true
       }
     }
 
-    // update display in mid-frame if we're stopping
-    // *** add stopReason back in? ***
-    if ((this.hasStopped || this.forceUpdate) && !this.inVBlank) {
-      this.displayView?.update()
+    if (stopReason && stopReason != "vblank") {
+      // TODO: Deal with the issue of a breakpoint hitting
+      //  that is then ignored because the underlying code
+      //  is not loaded or is switched out.
+      this.updateDisplay(true)
     }
 
     // update audio, disk, etc.
@@ -377,6 +366,8 @@ export abstract class DisplayClock extends Clock {
 
     return { stopReason, newFrame, newLine }
   }
+
+  protected abstract updateDisplay(partial: boolean): void
 }
 
 //------------------------------------------------------------------------------

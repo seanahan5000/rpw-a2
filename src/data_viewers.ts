@@ -2,7 +2,7 @@
 import { Isa6502 } from "./isa6502"
 import { ScreenDisplay } from "./display/display"
 import { HiresInterleave } from "./machine/apple/formats/tables"
-import { appleFormatMap } from "./machine/apple/apple"
+// import { appleFormatMap } from "./machine/apple/apple"
 
 // TODO: open viewer with a common interface from a name string? Get rid of exports?
 
@@ -708,12 +708,13 @@ export class ViewBinaryDisasm {
 export class ViewBinaryGraphics {
   static asCanvas(data: Uint8Array, typeName: string): HTMLCanvasElement {
     const canvas = <HTMLCanvasElement>document.createElement("canvas")
-    const displayFormat = appleFormatMap.get(typeName)
-    if (displayFormat) {
-      const display = new ScreenDisplay(displayFormat, canvas)
-      const displayData = displayFormat.deinterleaveFrame(data)
-      display.setFrameMemory(displayData)
-    }
+    // *** put back in ***
+    // const displayFormat = appleFormatMap.get(typeName)
+    // if (displayFormat) {
+    //   const display = new ScreenDisplay(displayFormat, canvas)
+    //   const displayData = displayFormat.deinterleaveFrame(data)
+    //   display.setFrameMemory(displayData)
+    // }
     return canvas
   }
 }

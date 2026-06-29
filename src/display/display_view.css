@@ -14,59 +14,24 @@
 
 #display-grid {
   display: grid;
-  grid-auto-columns: 0px 564px;
+  grid-auto-columns: 0px;
   row-gap: 0px;
   column-gap: 0px;
+  margin-left: 0px;
   user-select: none;
 }
 
 #display-grid.editing {
-  grid-auto-columns: 72px 564px;
+  grid-auto-columns: 72px;
   column-gap: 4px;
 }
-
-/* display screen with tabs */
 
 .screen-tabs {
   grid-row: 1;
   grid-column: 2;
   font-family: var(--mono-font);
   font-size: 10pt;
-}
-
-.screen-tabs .tabs-list {
-  list-style: none;
-  padding: 0px;
-  margin: 0px;
-  margin-top: 6px;
-}
-
-.screen-tabs .tabs-list li {
-  width: 100px;
-  float: left;
-  margin: 0px;
-  padding: 0px;
-  padding-top: 4px;
-  padding-bottom: 2px;
-  text-align: center;
-  border: 2px solid #222;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-}
-
-.screen-tabs .tabs-list li:hover {
-  cursor: pointer;
-  background-color:#222 !important;
-}
-
-.screen-tabs .tabs-list li a {
-  text-decoration: none;
-  color: gray;
-}
-
-.screen-tabs .tabs-list li.active {
-  border-color: #444;
-  background-color:#444 !important;
+  margin-top: 4px;
 }
 
 /* TODO: fix this common class name being used globally */
@@ -82,10 +47,6 @@
 .screen-tab {
   resize: none;
   overflow: hidden;  /* required to avoid flicker while resizing */
-  width: 560px;
-  height: 384px;
-  min-width: 568px;
-  min-height: 392px;
 }
 
 #paint-canvas {
@@ -104,7 +65,7 @@
   grid-column: 1;
   grid-row-start: 1;
   grid-row-end: 2;
-  margin-top: 32px;
+  margin-top: 4px;
   margin-bottom: 4px;
   width: 72px;
   height: 268px;
@@ -179,6 +140,7 @@
   background-color: #333;
   max-height: 72px;
   grid-template-columns: auto auto auto auto auto auto auto auto;
+  margin-bottom: 4px;
 }
 
 #color-palette.visible {

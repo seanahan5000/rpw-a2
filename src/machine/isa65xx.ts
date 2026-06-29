@@ -142,7 +142,7 @@ export class Isa6502 extends Isa {
 
   // used for coverage marking as branch target
   public isBranch(opByte: number): boolean {
-    const opDef = Isa6502.opDefs6502[opByte]
+    const opDef = this.opcodes[opByte]
     return opDef.mode == OpMode.REL && (opDef.fc ?? false)
   }
 

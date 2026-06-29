@@ -3,28 +3,32 @@ import * as base64 from 'base64-js'
 import { EmulatorParams, Emulator } from "../machine/machine"
 import { AppleEmulator } from "../machine/apple/apple_view"
 import { AtariEmulator } from "../machine/atari/atari_view"
-import { FileDiskImage, AppleMachine } from "../machine/apple/apple"
 import { DisplayView } from "../display/display_view"
 import { ViewApplesoft, ViewBinaryDisasm, ViewBinaryHex, ViewInteger, ViewText } from "../data_viewers"
-import { IDisplay, IHostHooks, PixelData } from "../shared/types"
+import { IHostHooks, PixelData } from "../shared/types"
 import { HiresInterleave, TextLoresInterleave } from "../machine/apple/formats/tables"
 import { deinterleave40, deinterleave80 } from "../machine/apple/formats/text"
-import { DisplayFormat } from "../display/format"
-import { appleFormatMap } from "../machine/apple/apple"
+import { DisplayFormat, Bitmap } from "../display/format"
+import { DoubleLoresFormat, LoresFormat } from "../machine/apple/formats/lores"
+import { DoubleHiresFormat, HiresFormat } from "../machine/apple/formats/hires"
 
 // @ts-ignore
 const vscode = acquireVsCodeApi()
 
 //------------------------------------------------------------------------------
 
-class GraphicsView implements IDisplay, IHostHooks {
+class GraphicsView implements IHostHooks {
 
+  private bitmap: Bitmap
   public display: DisplayView
 
   constructor(topDiv: HTMLDivElement, public graphicsData: Uint8Array) {
-    this.display = new DisplayView(topDiv, this)
+    this.bitmap = this.readFrame()
+    this.display = new DisplayView(topDiv, this.bitmap.format)
+    this.display.setFrame(this.bitmap, undefined, (frame: Bitmap, altFrame?: Bitmap) => {
+      this.writeFrame(frame)
+    })
     this.display.setHostHooks(this)
-    this.display.update()
   }
 
   public update(body: any) {
@@ -38,108 +42,86 @@ class GraphicsView implements IDisplay, IHostHooks {
     }
   }
 
+  private readFrame(): Bitmap {
+    let format: DisplayFormat
+    let frame: PixelData
+    let bitmap: Bitmap
+    const size = this.graphicsData.length
+    if (size == 0x0400) {
+      format = new LoresFormat()
+      frame = format.createFramePixelData()
+      deinterleave40(this.graphicsData, frame, TextLoresInterleave)
+      bitmap = format.createFrameBitmap()
+    } else if (size == 0x0800) {
+      format = new DoubleLoresFormat()
+      frame = format.createFramePixelData()
+      deinterleave80(this.graphicsData, frame, TextLoresInterleave)
+    } else if (size >= 0x1ff8 && size <= 0x2000) {
+      format = new HiresFormat()
+      frame = format.createFramePixelData()
+      deinterleave40(this.graphicsData, frame, HiresInterleave)
+    } else if (size == 0x4000) {
+      format = new DoubleHiresFormat()
+      frame = format.createFramePixelData()
+      deinterleave80(this.graphicsData, frame, HiresInterleave)
+    } else {
+      throw new Error("Bad bitmap data format")
+    }
+    bitmap = format.createFrameBitmap()
+    bitmap.decode(frame)
+    return bitmap
+  }
+
+  private writeFrame(bitmap: Bitmap) {
+    const frame = bitmap.encode()
+    const size = this.graphicsData.length
+    if (size == 0x0400) {         // lores
+      let srcOffset = 0
+      for (let y = 0; y < frame.bounds.height; y += 1) {
+        const address = TextLoresInterleave[y]
+        for (let x = 0; x < frame.byteWidth; x += 1) {
+          this.graphicsData[address + x] = frame.bytes[srcOffset + x]
+        }
+        srcOffset += frame.byteWidth
+      }
+    } else if (size == 0x0800) {  // double-lores
+      let srcOffset = 0
+      for (let y = 0; y < frame.bounds.height; y += 1) {
+        const address = TextLoresInterleave[y]
+        let srcIndex = srcOffset
+        for (let x = 0; x < frame.byteWidth / 2; x += 1) {
+          this.graphicsData[0x0000 + address + x] = frame.bytes[srcIndex++]
+          this.graphicsData[0x0400 + address + x] = frame.bytes[srcIndex++]
+        }
+        srcOffset += frame.byteWidth
+      }
+    } else if (size >= 0x1FF8 && size <= 0x2000) {    // hires
+      let srcOffset = 0
+      for (let y = 0; y < frame.bounds.height; y += 1) {
+        const address = HiresInterleave[y]
+        for (let x = 0; x < frame.byteWidth; x += 1) {
+          this.graphicsData[address + x] = frame.bytes[srcOffset + x]
+        }
+        srcOffset += frame.byteWidth
+      }
+    } else if (size == 0x4000) {  // double-hires
+      let srcOffset = 0
+      for (let y = 0; y < frame.bounds.height; y += 1) {
+        const address = HiresInterleave[y]
+        let srcIndex = srcOffset
+        for (let x = 0; x < frame.byteWidth / 2; x += 1) {
+          this.graphicsData[0x0000 + address + x] = frame.bytes[srcIndex++]
+          this.graphicsData[0x2000 + address + x] = frame.bytes[srcIndex++]
+        }
+        srcOffset += frame.byteWidth
+      }
+    }
+  }
+
   // IHostHooks implementation
 
   capturedUndo(index: number) {
     vscode.postMessage({ type: "edit", body: { index: index }})
-  }
-
-  // IMachineDisplay implementation
-
-  public setView(view: any) {
-  }
-
-  public getFormat(formatName: string): DisplayFormat {
-    return appleFormatMap.get(formatName)!
-  }
-
-  public getDisplayMode(): string {
-    const size = this.graphicsData?.length ?? 0
-    if (size == 0x0400) {
-      return "lores"
-    }
-    if (size == 0x0800) {
-      return "dlores"
-    }
-    if (size >= 0x1ff8 && size <= 0x2000) {
-      return "hires"
-    }
-    if (size == 0x4000) {
-      return "dhires"
-    }
-    return "unknown"
-  }
-
-  public getVisibleDisplayPage(): number {
-    return 0
-  }
-
-  public getActiveDisplayPage(): number {
-    return 0
-  }
-
-  public getDisplayMemory(frame: PixelData, page: number): void {
-    if (this.graphicsData) {
-      const size = this.graphicsData.length
-      if (size == 0x0400) {                           // lores
-        deinterleave40(this.graphicsData, frame, TextLoresInterleave)
-      } else if (size == 0x0800) {                    // double-lores
-        deinterleave80(this.graphicsData, frame, TextLoresInterleave)
-      } else if (size >= 0x1ff8 && size <= 0x2000) {  // hires
-        deinterleave40(this.graphicsData, frame, HiresInterleave)
-      } else if (size == 0x4000) {                    // double-hires
-        deinterleave80(this.graphicsData, frame, HiresInterleave)
-      }
-    }
-  }
-
-  // TODO: wouldn't be needed if formats did interleave
-  // TODO: too much copy/paste here
-  public setDisplayMemory(frame: PixelData, page: number): void {
-    if (this.graphicsData) {
-      const size = this.graphicsData.length
-      if (size == 0x0400) {         // lores
-        let srcOffset = 0
-        for (let y = 0; y < frame.bounds.height; y += 1) {
-          const address = TextLoresInterleave[y]
-          for (let x = 0; x < frame.byteWidth; x += 1) {
-            this.graphicsData[address + x] = frame.bytes[srcOffset + x]
-          }
-          srcOffset += frame.byteWidth
-        }
-      } else if (size == 0x0800) {  // double-lores
-        let srcOffset = 0
-        for (let y = 0; y < frame.bounds.height; y += 1) {
-          const address = TextLoresInterleave[y]
-          let srcIndex = srcOffset
-          for (let x = 0; x < frame.byteWidth / 2; x += 1) {
-            this.graphicsData[0x0000 + address + x] = frame.bytes[srcIndex++]
-            this.graphicsData[0x0400 + address + x] = frame.bytes[srcIndex++]
-          }
-          srcOffset += frame.byteWidth
-        }
-      } else if (size >= 0x1FF8 && size <= 0x2000) {    // hires
-        let srcOffset = 0
-        for (let y = 0; y < frame.bounds.height; y += 1) {
-          const address = HiresInterleave[y]
-          for (let x = 0; x < frame.byteWidth; x += 1) {
-            this.graphicsData[address + x] = frame.bytes[srcOffset + x]
-          }
-          srcOffset += frame.byteWidth
-        }
-      } else if (size == 0x4000) {  // double-hires
-        let srcOffset = 0
-        for (let y = 0; y < frame.bounds.height; y += 1) {
-          const address = HiresInterleave[y]
-          let srcIndex = srcOffset
-          for (let x = 0; x < frame.byteWidth / 2; x += 1) {
-            this.graphicsData[0x0000 + address + x] = frame.bytes[srcIndex++]
-            this.graphicsData[0x2000 + address + x] = frame.bytes[srcIndex++]
-          }
-          srcOffset += frame.byteWidth
-        }
-      }
-    }
   }
 }
 
@@ -180,7 +162,11 @@ class Webview {
             saveState: this.state
           }
           if (body.machine == "7800") {
-            this.emulator = new AtariEmulator(topDiv, params)
+            this.emulator = new AtariEmulator(topDiv, params, (type: string) => {
+              if (type == "cart") {
+                vscode.postMessage({ type: "driveClick", driveIndex: -1 })
+              }
+            })
           } else {
             params.variant = body.machine ?? "iie"
             this.emulator = new AppleEmulator(topDiv, params, (type: string) => {
@@ -243,26 +229,26 @@ class Webview {
         break
       }
 
-      case "setDiskImage": {
-        if (this.emulator && body.dataString) {
-          if (this.emulator.machine instanceof AppleMachine) {
-            // TODO: call appleEmu and have it do most of this instead
-            const dataBytes = base64.toByteArray(body.dataString)
-            const onWrite = body.writeProtected ? undefined : (newDataBytes: Uint8Array) => {
-              vscode.postMessage({
-                type: "diskWrite",
-                requestId,
-                body: {
-                  fullPath: body.fullPath,
-                  dataString: base64.fromByteArray(newDataBytes)
-                }
-              })
-            }
-            const diskImage = new FileDiskImage(body.fullPath, dataBytes, onWrite)
-            const driveIndex = body.driveIndex ?? 0
-            this.emulator.machine.setDiskImage(driveIndex, diskImage)
-            this.emulator.machine.displayGen.displayView.focus()
+      case "setDataImage": {
+        if (this.emulator && body.dataString && body.fullPath) {
+          const dataBytes = base64.toByteArray(body.dataString)
+          const driveIndex = body.driveIndex ?? 0
+          const isWriteProtected = body.writeProtected ?? true
+          const onWrite = isWriteProtected ? undefined : (newDataBytes: Uint8Array) => {
+            vscode.postMessage({
+              type: "dataWrite",
+              requestId,
+              body: {
+                fullPath: body.fullPath,
+                dataString: base64.fromByteArray(newDataBytes)
+              }
+            })
           }
+
+          this.emulator.machine.setDiskCartImage(body.fullPath, dataBytes, driveIndex, onWrite)
+
+          // *** repair this ***
+          // this.emulator.machine.displayView.focus()
         }
         break
       }

@@ -566,7 +566,7 @@ export class Tia {
       case TiaWReg.audf1:
       case TiaWReg.audv0:
       case TiaWReg.audv1:
-        this.machine.writeAudio(address, value)
+        this.machine.writeTiaAudio(address, value)
         break
       case TiaWReg.grp0:
         this.delayQueue.push(address, value, Delay.grp)

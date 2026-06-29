@@ -135,6 +135,8 @@ function createCart2600(data: Uint8Array): Cart2600 | undefined {
 
 //------------------------------------------------------------------------------
 
+// *** combine with audio channel ***
+
 // do-nothing implemention
 class Pokey implements IMemory {
 
@@ -206,13 +208,66 @@ enum Cart7800Type {
   XBoard      = 10,
   XM          = 11,
   MegaCart    = 12,
-  VersaBoard  = 13,
-  P450        = 14,
-  P450_Pokey  = 15,
-  P450_SG_RAM = 16,
-  P450_SG9    = 17,
-  P450_VB     = 18
+  VersaBoard  = 0x10,
+
+  P450_Pokey  = 0x20,
+
+  // P450        = 14,
+  // P450_Pokey  = 15,
+  // P450_SG_RAM = 16,
+  // P450_SG9    = 17,
+  // P450_VB     = 18
 }
+
+// #define A78_POKEY0450 0x20
+
+// // Here, we take the feature attribute from .xml (i.e. the PCB name) and we assign a unique ID to it
+// static const a78_slot slot_list[] =
+// {
+// 	{ A78_TYPE0,      "a78_rom" },
+// 	{ A78_TYPE1,      "a78_pokey" },
+// 	{ A78_TYPE2,      "a78_sg" },
+// 	{ A78_TYPE3,      "a78_sg_pokey" },
+// 	{ A78_TYPE6,      "a78_sg_ram" },
+// 	{ A78_TYPEA,      "a78_sg9" },
+// 	{ A78_TYPE8,      "a78_mram" },
+// 	{ A78_ABSOLUTE,   "a78_abs" },
+// 	{ A78_ACTIVISION, "a78_act" },
+// 	{ A78_HSC,        "a78_hsc" },
+// 	{ A78_XB_BOARD,   "a78_xboard" },
+// 	{ A78_XM_BOARD,   "a78_xm" },
+// 	{ A78_MEGACART,   "a78_megacart" },
+// 	{ A78_VERSABOARD, "a78_versa" },
+// 	{ A78_TYPE0_POK450, "a78_p450_t0" },
+// 	{ A78_TYPE1_POK450, "a78_p450_t1" },
+// 	{ A78_TYPE6_POK450, "a78_p450_t6" },
+// 	{ A78_TYPEA_POK450, "a78_p450_ta" },
+// 	{ A78_VERSA_POK450, "a78_p450_vb" }
+// };
+
+// enum
+// {
+// 	A78_TYPE0 = 0,      // standard 8K/16K/32K games, no bankswitch
+// 	A78_TYPE1,          // as TYPE0 + POKEY chip on the PCB
+// 	A78_TYPE2,          // Atari SuperGame pcb (8x16K banks with bankswitch)
+// 	A78_TYPE3,          // as TYPE1 + POKEY chip on the PCB
+// 	A78_TYPE6,          // as TYPE1 + RAM IC on the PCB
+// 	A78_TYPEA,          // Alien Brigade, Crossbow (9x16K banks with diff bankswitch)
+// 	A78_TYPE8,          // Rescue on Fractalus, as TYPE0 + 2K Mirror RAM IC on the PCB
+// 	A78_ABSOLUTE,       // F18 Hornet
+// 	A78_ACTIVISION,     // Double Dragon, Rampage
+// 	A78_HSC,            // Atari HighScore cart
+// 	A78_XB_BOARD,       // A7800 Expansion Board (it shall more or less apply to the Expansion Module too, but this is not officially released yet)
+// 	A78_XM_BOARD,       // A7800 XM Expansion Module (theoretical specs only, since this is not officially released yet)
+// 	A78_MEGACART,               // Homebrew by CPUWIZ, consists of SuperGame bank up to 512K + 32K RAM banked
+// 	A78_VERSABOARD = 0x10,      // Homebrew by CPUWIZ, consists of SuperGame bank up to 256K + 32K RAM banked
+// 	// VersaBoard variants configured as Type 1/3/A or VersaBoard + POKEY at $0450
+// 	A78_TYPE0_POK450 = 0x20,
+// 	A78_TYPE1_POK450 = 0x21,
+// 	A78_TYPE6_POK450 = 0x24,
+// 	A78_TYPEA_POK450 = 0x25,
+// 	A78_VERSA_POK450 = 0x30
+// };
 
 class Cart7800 extends Cart implements IMemory {
 
@@ -249,20 +304,18 @@ class Cart7800 extends Cart implements IMemory {
     const paddedLength = 9 * 0x4000
     this.data = new Uint8Array(paddedLength).fill(0xee)
     let setOffset = paddedLength - data.length
-    if (data.length <= 8 * 0x4000) {
-      setOffset -= 0x4000
-    }
     this.data.set(data, setOffset)
     this.curBank = 6
 
     // TODO: make this work for CartType >= MRAM
 
-    if (this.cartType == Cart7800Type.SG_RAM) {
+    if ((this.cartType & ~Cart7800Type.P450_Pokey) == Cart7800Type.SG_RAM) {
       this.ram = new Uint8Array(0x4000)
     }
 
     if (this.cartType == Cart7800Type.Pokey ||
-        this.cartType == Cart7800Type.SG_Pokey) {
+        this.cartType == Cart7800Type.SG_Pokey ||
+        (this.cartType & Cart7800Type.P450_Pokey)) {
       this.pokey = new Pokey()
     }
   }
@@ -288,7 +341,7 @@ class Cart7800 extends Cart implements IMemory {
     }
 
     // TODO: only SuperGame switching for now
-    if (this.cartType >= Cart7800Type.MRAM) {
+    if ((this.cartType & ~Cart7800Type.P450_Pokey) >= Cart7800Type.MRAM) {
       return false
     }
     return true
@@ -392,10 +445,10 @@ class Cart7800 extends Cart implements IMemory {
         cartType = (cartBits & 1) ? Cart7800Type.SG_Pokey : Cart7800Type.SuperGame
         break
       case 0x0006:
-        cartType = Cart7800Type.SG_RAM
+        cartType = Cart7800Type.SG_RAM    // *** check this
         break
       case 0x000a:
-        cartType = Cart7800Type.SG9
+        cartType = Cart7800Type.SG9       // *** check this
         break
       case 0x0022:
       case 0x0026:
@@ -409,7 +462,7 @@ class Cart7800 extends Cart implements IMemory {
 
     if (cartBits & 0x0040) {
       if (cartType != Cart7800Type.SuperGame) {
-        cartType &= ~0x02
+        cartType &= ~Cart7800Type.SuperGame
         cartType += Cart7800Type.P450_Pokey
       }
     }
@@ -434,24 +487,29 @@ class Cart7800 extends Cart implements IMemory {
     const offset = address & 0x3fff
 
     if (address >= 0xc000) {
-      return this.data[7 * 0x4000 + offset]
+      return this.data[(7 + 1) * 0x4000 + offset]
     }
     if (address >= 0x8000) {
-      return this.data[this.curBank * 0x4000 + offset]
+      return this.data[(this.curBank + 1) * 0x4000 + offset]
     }
     if (address >= 0x4000) {
       if (this.ram) {
         return this.ram[offset]
       }
-      if (this.pokey) {
+      const type = this.cartType & ~Cart7800Type.P450_Pokey
+      if (this.pokey) {     // *** check for pokey4000 versus pokey0450
         return this.pokey.read(offset & 0x0f, cycleCount)
       }
-      if (this.cartType == Cart7800Type.ROM) {
-        return this.data[5 * 0x4000 + offset]
+      if (type == Cart7800Type.ROM) {
+        return this.data[(5 + 1) * 0x4000 + offset]
       }
-      if (this.cartType == Cart7800Type.SG9) {
-        return this.data[8 * 0x4000 + offset]
+      if (type == Cart7800Type.SG9) {
+        return this.data[0 * 0x4000 + offset]
       }
+      // NOTE: Some simple supergame carts (ace of aces, etc.)
+      //  implicitly expect bank 6 at 0x4000, so do that
+      //  here for compatibility.
+      return this.data[(6 + 1) * 0x4000 + offset]
     }
     return 0xee
   }

@@ -1,6 +1,6 @@
 
 import * as base64 from 'base64-js'
-import { IClock, IMemory, ICpu, IFrameSource } from "../../shared/types"
+import { IClock, IMemory, ICpu } from "../../shared/types"
 import { Point, Size, Rect, PixelData } from "../../shared/types"
 import { Machine, base64FromUint8 } from "../machine"
 import { DisplayClock } from "../clock"
@@ -11,10 +11,12 @@ import { Tia } from "./tia"
 import { Pia } from "./pia"
 import { createCart } from "./cart"
 import { DisplayView } from "../../display/display_view"
-import { DisplayFormat, Bitmap } from "../../display/format"
-import { TiaAudioChannel } from "./audio"
+import { ColorPattern, DisplayFormat, Bitmap } from "../../display/format"
+import { TiaAudioChannel, PokeyAudio } from "./audio"
 import { Cart } from "./cart"
 import { hscRomImage } from "./hsc"
+import { CoordinateInfo } from '../../display/display'
+import { Tool } from '../../display/tools'
 
 //------------------------------------------------------------------------------
 
@@ -30,6 +32,7 @@ export class AtariMachine extends Machine implements IMemory {
 
   private audio0: TiaAudioChannel
   private audio1: TiaAudioChannel
+  private pokeyAudio: PokeyAudio
 
   private ram: Uint8Array = new Uint8Array(0x1000)
   private inputs: number[] = new Array(6).fill(0xff)
@@ -48,6 +51,8 @@ export class AtariMachine extends Machine implements IMemory {
 
     this.audio0 = new TiaAudioChannel()
     this.audio1 = new TiaAudioChannel()
+
+    this.pokeyAudio = new PokeyAudio()
 
     this.hscRom = base64.toByteArray(hscRomImage.join(""))
     // if (fs.existsSync("hscsram.bin")) {
@@ -71,13 +76,12 @@ export class AtariMachine extends Machine implements IMemory {
     }
   }
 
-  public setDataImage(
+  public setDiskCartImage(
       fullPath: string,
       dataBytes: Uint8Array,
       driveIndex?: number,
       onWrite?: (newDataBytes: Uint8Array) => void) {
-
-    this.setCartImage(dataBytes, false)  // ***
+    this.setCartImage(dataBytes, true)
   }
 
   public reset(hardReset: boolean): void {
@@ -85,6 +89,7 @@ export class AtariMachine extends Machine implements IMemory {
     this.inputs.fill(0xff)    // *** don't reset difficulty switches ***
     this.audio0.reset()
     this.audio1.reset()
+    this.pokeyAudio.reset()
     this.maria.reset()
     this.tia.reset()
     this.pia.reset()
@@ -97,6 +102,7 @@ export class AtariMachine extends Machine implements IMemory {
     this.audio0.update(cycleCount)
     this.audio1.update(cycleCount)
     if (this.proMode) {
+      this.pokeyAudio.update(cycleCount)        // *** maria cycles???
       // TODO: could do this less frequently
       if (this.hscDirty) {
         // fs.writeFileSync("hscsram.bin", this.hscSram)
@@ -147,9 +153,16 @@ export class AtariMachine extends Machine implements IMemory {
     // TODO: throw error if wrapping?
     address &= 0xffff
 
+    if (cycleCount) {
+      if (this.checkDataBreakpoints(address, 1)) {
+        this.clock.stop("dataBreakpoint")
+      }
+    }
+
     if (this.proMode) {
       const page = address & 0xff00
       if (page >= 0x4000) {
+        // TODO: optional pokey chip at 0x4000?
         return this.cart?.read(address, cycleCount) ?? 0xEE
       } else if (page >= 0x3000) {
         return this.hscRom[address - 0x3000]
@@ -161,6 +174,12 @@ export class AtariMachine extends Machine implements IMemory {
         }
       } else if (page >= 0x1000) {
         return this.hscSram[address - 0x1000]
+      } else if (page >= 0x0400) {
+        if (address >= 0x0450 && address <= 0x045F) {
+          return this.pokeyAudio.read(address - 0x0450, cycleCount)
+        } else {
+          return 0xEE
+        }
       } else if (page >= 0x0200) {
         return this.pia.read(address, cycleCount)
       } else if ((address & ~0x0100) < 0x40) {
@@ -194,9 +213,16 @@ export class AtariMachine extends Machine implements IMemory {
     // TODO: throw error if wrapping?
     address &= 0xffff
 
+    if (cycleCount) {
+      if (this.checkDataBreakpoints(address, 2)) {
+        this.clock.stop("dataBreakpoint")
+      }
+    }
+
     if (this.proMode) {
       const page = address & 0xff00
       if (page >= 0x4000) {
+        // TODO: optional pokey chip at 0x4000?
         this.cart?.write(address, value, cycleCount)
       } else if (page >= 0x3000) {
         // ignore HSC ROM writes
@@ -209,6 +235,10 @@ export class AtariMachine extends Machine implements IMemory {
       } else if (page >= 0x1000) {
         this.hscSram[address - 0x1000] = value
         this.hscDirty = true
+      } else if (page >= 0x0400) {
+        if (address >= 0x0450 && address <= 0x045F) {
+          this.pokeyAudio.write(address - 0x0450, value)
+        }
       } else if (page >= 0x0200) {
         this.pia.write(address, value , cycleCount)
       } else if ((address & ~0x0100) < 0x40) {
@@ -232,7 +262,8 @@ export class AtariMachine extends Machine implements IMemory {
     }
   }
 
-  public writeAudio(address: number, value: number) {
+  // *** call through to audio driver ***
+  public writeTiaAudio(address: number, value: number) {
     // NOTE: update will have already happened
     switch (address) {
       case MariaReg.audc0:
@@ -264,7 +295,7 @@ export class AtariMachine extends Machine implements IMemory {
   }
 
   public writeRange(address: number, data: Uint8Array | number[]): void {
-    if (address & 0xF000) {
+    if ((address & 0xF000) || address < 0) {
       if (data instanceof Array) {
         data = new Uint8Array(data)
       }
@@ -279,6 +310,7 @@ export class AtariMachine extends Machine implements IMemory {
   public set soundEnabled(enabled: boolean) {
     this.audio0.isEnabled = enabled
     this.audio1.isEnabled = enabled
+    this.pokeyAudio.isEnabled = enabled
   }
 
   // state handling
@@ -371,13 +403,12 @@ export class AtariMachine extends Machine implements IMemory {
 
 const AtariActiveLines = 25 + 192 + 26  // 243
 
-class AtariDisplayClock extends DisplayClock implements IFrameSource {
+class AtariDisplayClock extends DisplayClock {
 
   private atari: AtariMachine
 
   private dmaComplete: boolean = false
   private wasHalted: boolean = false
-  public saw320Mode: boolean = false
 
   private bitmap?: Bitmap
   private curPixels: Uint8Array = new Uint8Array(320 * AtariActiveLines)
@@ -386,11 +417,21 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
   constructor(machine: AtariMachine) {
     // *** change cpuScale if not in proMode (to 6?) ***
     // *** how does this work with Tia generating vblank?
-    super(machine, 454, 243, 263, 60, 4)
+    // *** 243 changed to 242 because Joust expected exact timing of vblank
+    //  *** after NMI on line 239
+    super(machine, 454, 242/*243*/, 263, 60, 4)
     this.atari = machine
 
     machine.cpu.on("halt", (cycleCount: number): number => {
       return this.onHalt(cycleCount)
+    })
+
+    // TODO: clean up this hack that updates palette on stop
+    this.on("stop", () => {
+      if (this.bitmap && this.bitmap.format instanceof Atari2600Format) {
+        this.bitmap.format.update()
+        this.displayView?.prepareDisplay()
+      }
     })
   }
 
@@ -398,8 +439,6 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
     super.reset(hardReset)
     this.dmaComplete = false
     this.wasHalted = false
-    this.saw320Mode = false
-    // *** or maybe change cpuScale here if not in proMode (to 6?) ***
   }
 
   public getState(): any {
@@ -407,7 +446,6 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
     state.displayClock = super.getState()
     state.dmaComplete = this.dmaComplete
     state.wasHalted = this.wasHalted
-    state.saw320Mode = this.saw320Mode
     state.curPixels = new Uint8Array(this.curPixels)
     state.prevPixels = new Uint8Array(this.prevPixels)
     return state
@@ -431,7 +469,6 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
 
     this.dmaComplete = state.dmaComplete
     this.wasHalted = state.wasHalted
-    this.saw320Mode = state.saw320Mode
 
     if (state.curPixelsString) {
       this.curPixels = base64.toByteArray(state.curPixelsString)
@@ -445,7 +482,8 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
       this.prevPixels = new Uint8Array(state.prevPixels)
     }
 
-    this.displayView?.update()
+    // this.displayView?.update()    // ***
+    this.updateDisplay(false)
   }
 
   // TODO: bother with adjusting CPU clock down on Tia access?
@@ -457,17 +495,19 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
 
         // give CPU chance to run at start of line before DMA begins
         //  7 cpu cycles - 2 cycles for min op duration
-        const inHBlank = this.lineCycles <= 28 - 8
+        let inHBlank = this.lineCycles <= (28 - 8)
 
         if (inHBlank ||
             this.inVBlank ||
             (this.dmaComplete && this.lineCycles <= 454)) {
           const cycleDelta = this.oneInstruction()
           this.lineCycles += cycleDelta
+          inHBlank = this.lineCycles <= (28 - 8)
         }
 
         if (!this.dmaComplete && !this.inVBlank && (!inHBlank || this.wasHalted)) {
           const holdCycles = this.lineCycles
+
           const result = this.atari.maria.buildScanline(this.lineCycles, this.lineNumber == 0)
           const dstOffset = this.lineNumber * 320
           for (let i = 0; i < 320; i += 1) {
@@ -476,13 +516,9 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
           this.lineCycles = result.lineCycles
           this.clockCycles += this.lineCycles - holdCycles
           this.dmaComplete = true
-          if (this.atari.maria.in320Mode()) {
-            this.saw320Mode = true
-          }
           if (result.interrupt) {
             this.atari.cpu.raiseNMI()
           }
-          // this.hasStopped = true  // ***
         }
 
         if (this.wasHalted && (this.dmaComplete || this.inVBlank)) {
@@ -494,7 +530,9 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
         const result = this.updateCycles()
         stopReason = result.stopReason
         if (result.newFrame) {
-          this.saw320Mode = false
+
+          // *** is this happening too late? after snapState()? ***
+          this.atari.maria.onFrameEnd()
 
           // *** copy instead -- gray out on copy ***
           const prevPixels = this.prevPixels
@@ -525,15 +563,28 @@ class AtariDisplayClock extends DisplayClock implements IFrameSource {
     }
   }
 
-  public readFrame(): Bitmap {
+  protected override updateDisplay(partial: boolean) {
+    if (!this.inVBlank) {
+
+      this.readFrame(partial)
+
+      this.displayView?.setFrame(this.bitmap!, undefined,
+        (frame: Bitmap, altFrame?: Bitmap) => {
+          this.writeFrame(frame)
+        }
+      )
+    }
+  }
+
+  public readFrame(partial: boolean): Bitmap {
     // *** check current mode
       // *** rebuild bitmap if changed
     if (!this.bitmap) {
-      const format = new Atari7800x320Format()
+      const format = new Atari7800x320Format(this.atari)
       this.bitmap = format.createFrameBitmap()
     }
 
-    const newLines = (this.hasStopped || this.forceUpdate) ? this.lineNumber : AtariActiveLines
+    const newLines = partial ? this.lineNumber : AtariActiveLines
     const downSample = this.bitmap.format.name != "7800x320"
 
     let srcOffset = 0
@@ -623,11 +674,37 @@ class AtariBitmap extends Bitmap {
   public decode(pixelData: PixelData): void {
     this.data = new Uint8Array(pixelData.bytes)
   }
+
+  public togglePixel(pt: Point, foreColor: number, backColor: number, foreMatch?: boolean): boolean {
+    if (pt.x < 0 || pt.y < 0 || pt.x >= this.width || pt.y >= this.height) {
+      return false
+    }
+    const offset = pt.y * this.stride + pt.x
+    const foreValue = this.format.getColorPattern(foreColor).values[0][0]
+    const backValue = this.format.getColorPattern(backColor).values[0][0]
+    if (foreMatch == undefined) {
+      foreMatch = this.data[offset] == foreValue
+    }
+    this.data[offset] = foreMatch ? backValue : foreValue
+    return foreMatch
+  }
 }
 
 //------------------------------------------------------------------------------
 
-class Atari2600Format extends DisplayFormat {
+export class Atari2600Format extends DisplayFormat {
+
+  protected atari?: AtariMachine
+  protected colorPatterns: ColorPattern[] = [{ values: [[0x00]] }]
+
+  constructor(atari?: AtariMachine) {
+    super()
+    this.atari = atari
+  }
+
+  public update() {
+    // ***
+  }
 
   public get name(): string {
     return "2600"
@@ -645,8 +722,12 @@ class Atari2600Format extends DisplayFormat {
     return { x: 4, y: 2 }
   }
 
-  public get alignment(): Point {
-    return { x: 0, y: 0 }
+  public get alignmentX(): number {
+    return 0
+  }
+
+  public get alignmentY(): number | number[] {
+    return 0
   }
 
   public calcPixelWidth(byteWidth: number): number {
@@ -673,16 +754,17 @@ class Atari2600Format extends DisplayFormat {
     return new AtariBitmap(src, this)
   }
 
-  public get colorCount(): number {
-    return AtariPaletteNTSC.length
+  public get patternCount(): number {
+    return this.colorPatterns.length
   }
 
   public getColorValueRgb(index: number): number {
-    return AtariPaletteNTSC[index]
+    const value = this.colorPatterns[index].values[0][0]
+    return AtariPaletteNTSC[value]
   }
 
-  public getColorPattern(index: number): number[][] {
-    return [[index]]
+  public getColorPattern(patternIndex: number): ColorPattern {
+    return this.colorPatterns[patternIndex]
   }
 
   public get altModes(): number {
@@ -715,16 +797,76 @@ class Atari2600Format extends DisplayFormat {
 
 //------------------------------------------------------------------------------
 
+// *** return "coordinate info" based on current hardware display list ***
+// *** could return complex object that caller may know how to deal with ***
+
 class Atari7800x160Format extends Atari2600Format {
+
+  public update() {
+    if (this.atari) {
+      this.colorPatterns = []
+      this.colorPatterns.push({ values: [[this.atari.maria.colorRegs[0]]], name: "BACKGRND" })
+      // // *** TODO: support more than 320A mode
+      // for (let i = 0; i < 8; i += 1) {
+      //   const name = "P" + (i + 1) + "C2"
+      //   this.colorPatterns.push({ values: [[atari.maria.colorRegs[i * 4 + 2]]], name })
+      // }
+
+      // *** rebuild alignment ***
+    }
+  }
 
   public get name(): string {
     return "7800x160"
+  }
+
+  public get alignmentX(): number {
+    return 8
+  }
+
+  public get alignmentY(): number | number[] {
+    return this.atari?.maria.getAlignmentY() ?? 8
+  }
+
+  public getDisplayInfo(coordInfo: CoordinateInfo, tool: Tool, defaultStr: string): string {
+    return this.atari?.maria.getDisplayInfo(coordInfo, tool, defaultStr) ?? defaultStr
   }
 }
 
 //------------------------------------------------------------------------------
 
+// *** TODO: consider folding 160 and 320 mode formats together
+
 class Atari7800x320Format extends Atari7800x160Format {
+
+  public update() {
+    if (this.atari) {
+      const maria = this.atari.maria
+
+      this.colorPatterns = []
+      this.colorPatterns.push({ values: [[maria.colorRegs[0]]], name: "BACKGRND" })
+
+      if (maria.readMode == 3) {
+        // 320A/C mode
+        for (let i = 0; i < 8; i += 1) {
+          const name = "P" + (i + 1) + "C2"
+          this.colorPatterns.push({ values: [[maria.colorRegs[i * 4 + 2]]], name })
+        }
+      } else if (maria.readMode == 2) {
+        // 320B/D mode
+        this.colorPatterns.push({ values: [[maria.colorRegs[0 * 4 + 1]]], name: "P0C1*" })
+        this.colorPatterns.push({ values: [[maria.colorRegs[0 * 4 + 2]]], name: "P0C2" })
+        this.colorPatterns.push({ values: [[maria.colorRegs[0 * 4 + 3]]], name: "P0C3" })
+        this.colorPatterns.push({ values: [[maria.colorRegs[4 * 4 + 1]]], name: "P4C1*" })
+        this.colorPatterns.push({ values: [[maria.colorRegs[4 * 4 + 2]]], name: "P4C2" })
+        this.colorPatterns.push({ values: [[maria.colorRegs[4 * 4 + 3]]], name: "P4C3" })
+      } else {
+        // TODO: other mode considerations?
+      }
+
+      // *** rebuild alignment ***
+    }
+  }
 
   public get name(): string {
     return "7800x320"

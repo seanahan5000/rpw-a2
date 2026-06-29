@@ -14,7 +14,7 @@
 }
 
 .apple-drive {
-  width: 44px;
+  width: 44px !important;
 }
 
 .apple-drive.drag {
@@ -39,7 +39,7 @@
   background-color: #000;
   height: 32px;
   position: relative;
-  left: -180px;
+  left: -90px;
   top: -40px;
 }
 

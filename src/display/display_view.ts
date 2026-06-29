@@ -1,31 +1,16 @@
 
 import { Point, Rect } from "../shared/types"
-import { IDisplay, IInputEventHandler, Joystick } from "../shared/types"
+import { IInputEventHandler, Joystick } from "../shared/types"
 import { IHostHooks } from "../shared/types"
 import { Tool, Cursor, ToolIconNames, ToolCursorNames, ToolCursorOrigins } from "./tools"
 import { ToolHelp, ColorHelp } from "./tools"
 import { PaintDisplay, getModifierKeys } from "./display"
-import { DisplayFormat } from "./format"
-
-export enum DisplaySource {
-  Visible   = 0,
-  Active    = 1,
-  Primary   = 2,
-  Secondary = 3,
-}
+import { DisplayFormat, Bitmap } from "./format"
 
 const displayTemplate = `
   <div id="display-grid">
     <div id="tool-palette"></div>
     <div id="display-div" class="screen-tabs">
-
-      <ul class="tabs-list">
-        <li id="li0" class="active"><a>Active(0)</a></li>
-        <li id="li1"><a>Visible(1)</a></li>
-        <li id="li2"><a>Primary</a></li>
-        <li id="li3"><a>Secondary</a></li>
-      </ul>
-
       <div id="screen-div" class="screen-tab">
         <div id="tool-cursor">
           <div id="crosshair-vert"></div>
@@ -45,11 +30,7 @@ const displayTemplate = `
 
 export class DisplayView {
   public topDiv: HTMLDivElement
-  private machineDisplay: IDisplay
   private inputHandler?: IInputEventHandler
-  private displayMode: string
-  private showPageTabs: boolean
-  private showAppleView: boolean
   private allowToggleEdit: boolean
   private startInEditMode: boolean
   private displayGrid: HTMLDivElement
@@ -63,8 +44,6 @@ export class DisplayView {
   private xyPalette: HTMLDivElement
   private paintCanvas: HTMLCanvasElement
   private paintDisplay: PaintDisplay
-  private displaySource: DisplaySource
-  private sourceListener?: (source: DisplaySource, isPaged: boolean, pageIndex: number) => void
   private projectName?: string
   private hostHooks?: IHostHooks
   private hasFocus = false
@@ -92,15 +71,11 @@ export class DisplayView {
 
   public isGame = false
 
-  constructor(parent: HTMLElement, display: IDisplay, inputHandler?: IInputEventHandler, oldUI = false) {
+  constructor(parent: HTMLElement, displayFormat: DisplayFormat, inputHandler?: IInputEventHandler, oldUI = false) {
 
-    this.machineDisplay = display
     this.inputHandler = inputHandler
-    this.displayMode = this.machineDisplay.getDisplayMode() ?? ""
 
     // TODO: base these on something real
-    this.showPageTabs = oldUI && (inputHandler != undefined)
-    this.showAppleView = !oldUI && (inputHandler != undefined)
     this.allowToggleEdit = (inputHandler != undefined) // (project != undefined)
     this.startInEditMode = (inputHandler == undefined) // (project == undefined)
 
@@ -125,30 +100,19 @@ export class DisplayView {
 
     this.displayDiv = <HTMLDivElement>this.displayGrid.querySelector("#display-div")
     this.paintCanvas = <HTMLCanvasElement>this.displayDiv.querySelector("#paint-canvas")
-    this.paintDisplay = new PaintDisplay(this.getFormat(this.displayMode), this.paintCanvas, this.machineDisplay)
+    this.paintDisplay = new PaintDisplay(this.paintCanvas, displayFormat)
 
-    // TODO: clean all this up
     this.toolPalette = <HTMLDivElement>this.displayGrid.querySelector("#tool-palette")
     this.colorPalette = <HTMLDivElement>this.displayGrid.querySelector("#color-palette")
     this.xyPalette = <HTMLDivElement>this.displayGrid.querySelector("#xy-palette")
 
-    if (this.showPageTabs || this.showAppleView) {
-      this.displaySource = DisplaySource.Active
-    } else {
-      this.displaySource = DisplaySource.Primary
-    }
-
-    if (!this.showPageTabs) {
-      const list = <HTMLElement>this.displayDiv.querySelector(".tabs-list")
-      list.style.display = "none"
-
-      // TODO: replace these hacks to clean up margin when screen tabs are hidden
-      //  with real css classes
-      this.toolPalette.style.marginTop = "4px"
-      this.displayGrid.style.marginLeft = "0px"
-      const screenTabs = <HTMLDivElement>this.displayGrid.querySelector(".screen-tabs")
-      screenTabs.style.marginTop = "4px"
-    }
+    const w = this.paintDisplay.format.displaySize.width
+    const h = this.paintDisplay.format.displaySize.height
+    const screenTab = <HTMLDivElement>this.displayGrid.querySelector(".screen-tab")
+    screenTab.style.width = `${w + 8}px`
+    screenTab.style.height = `${h + 8}px`
+    screenTab.style.minWidth = screenTab.style.width
+    screenTab.style.minHeight = screenTab.style.height
 
     // TODO: pass this flag in based on host environment
     const inChrome = false
@@ -201,19 +165,6 @@ export class DisplayView {
 
     this.prepareDisplay()
 
-    if (this.showPageTabs) {
-      for (let source = 0; source < 4; source += 1) {
-        const liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + source)
-        liElement.onmousedown = () => {
-          for (let j = 0; j < 4; j += 1) {
-            const liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + j)
-            liElement.className = j == source ? "active" : ""
-          }
-          this.setDisplaySource(source)
-        }
-      }
-    }
-
     if (this.startInEditMode) {
       this.toggleEditMode()
       // force this once to initialize xy-palette contents
@@ -221,19 +172,6 @@ export class DisplayView {
     }
 
     // this.joystick = { x0: 0, y0: 0, button0: false, button1: false }
-  }
-
-  private getFormat(formatName: string): DisplayFormat {
-
-    // TODO: get rid of this apple-specific suffix
-    const isMixed = formatName.endsWith(".mixed")
-    // TODO: use isMixed for something
-
-    if (isMixed) {
-      formatName = formatName.substring(0, formatName.length - 6)
-    }
-
-    return this.machineDisplay.getFormat(formatName)!
   }
 
   private updateCursor(modifierKeys: number, cursor?: Cursor) {
@@ -331,49 +269,6 @@ export class DisplayView {
   }
 
   //--------------------------------------------------------
-  // display source and paging UI support
-  //--------------------------------------------------------
-
-  public setDisplaySource(displaySource: DisplaySource) {
-    this.displaySource = displaySource
-    this.callSourceListener()
-    this.update()
-    this.paintCanvas.focus()
-  }
-
-  public setSourceListener(listener: (source: DisplaySource, isPaged: boolean, pageIndex: number) => void) {
-    this.sourceListener = listener
-    this.callSourceListener()
-  }
-
-  private callSourceListener() {
-    if (this.sourceListener) {
-      this.sourceListener(this.displaySource, this.isPagedFormat(), this.getPageIndex())
-    }
-  }
-
-  private isPagedFormat(): boolean {
-    const formatName = this.paintDisplay.format.name
-    return formatName == "text40" ||
-      formatName.startsWith("lores") ||
-      formatName.startsWith("hires")
-  }
-
-  public getPageIndex(): number {
-    if (this.displaySource == DisplaySource.Primary) {
-      return 0
-    } else if (this.displaySource == DisplaySource.Secondary) {
-      return 1
-    } else if (this.displaySource == DisplaySource.Visible) {
-      return this.machineDisplay.getVisibleDisplayPage() ?? 0
-    } else if (this.displaySource == DisplaySource.Active) {
-      return this.machineDisplay.getActiveDisplayPage() ?? 0
-    } else {
-      return 0
-    }
-  }
-
-  //--------------------------------------------------------
 
   private setTool(toolIndex: Tool, modifiers = 0, doubleClick = false) {
     this.paintDisplay.setTool(toolIndex, modifiers, doubleClick)
@@ -468,37 +363,19 @@ export class DisplayView {
     return this.isEditing
   }
 
-  update() {
+  public setFrame(
+      frame: Bitmap,
+      altFrame?: Bitmap,
+      frameWrite?: (frame: Bitmap, altFrame?: Bitmap) => void) {
 
-    if (this.showPageTabs) {
-      for (let i = 0; i < 2; i += 1) {
-        let liElement = <HTMLLIElement>this.displayDiv.querySelector("#li" + i)
-        let anchorElement = <HTMLAnchorElement>liElement.children[0]
-        let liText = anchorElement.innerHTML
-        if (liText.endsWith(")")) {
-          liText = liText.substring(0, liText.length - 3)
-        }
-        if (i == 0) {
-          let activePage = this.machineDisplay?.getActiveDisplayPage() ?? 0
-          anchorElement.innerHTML = liText + `(${1 + activePage})`
-        } else {
-          let visiblePage = this.machineDisplay?.getVisibleDisplayPage() ?? 0
-          anchorElement.innerHTML = liText + `(${1 + visiblePage})`
-        }
-      }
-    }
-
-    const newDisplayMode = this.machineDisplay.getDisplayMode() ?? ""
-    if (newDisplayMode != this.displayMode) {
-      this.displayMode = newDisplayMode
+    if (!this.paintDisplay.setFrame(frame, altFrame)) {
       const prevTool = this.paintDisplay.getTool()
-      this.paintDisplay = new PaintDisplay(this.getFormat(newDisplayMode), this.paintCanvas, this.machineDisplay)
+      this.paintDisplay = new PaintDisplay(this.paintCanvas, frame.format)
+      this.paintDisplay.setFrame(frame, altFrame)
+      this.paintDisplay.onFrameChanged = frameWrite
       this.prepareDisplay()
       this.paintDisplay.setTool(prevTool)
     }
-    this.paintDisplay.setPageIndex(this.getPageIndex())
-    this.paintDisplay.updateFromMemory()
-    this.callSourceListener()
   }
 
   private onToolRectChanged() {
@@ -534,45 +411,28 @@ export class DisplayView {
         const xb2 = Math.floor((x2 + 6) / 7)
         str += "<br>"
         str += `PictClear ${xb1.toString()};${y1.toString()};${xb2.toString()};${y2.toString()}`
+        this.xyPalette.innerHTML = str
+        return
+      }
+    }
+
+    if (result.end) {
+      str = `X1: ${x1}, Y1: ${y1}`
+      str += `<br>X2: ${result.end.x}, Y2: ${result.end.y}`
+      if (result.size) {
+        str += `<br>W: ${result.size.width}, H: ${result.size.height}`
       }
     } else {
-      if (result.end) {
+      if (result.size && width && height) {
         str = `X1: ${x1}, Y1: ${y1}`
-        str += `<br>X2: ${result.end.x}, Y2: ${result.end.y}`
-        if (result.size) {
-          str += `<br>W: ${result.size.width}, H: ${result.size.height}`
-        }
+        str += `<br>X2: ${x1 + result.size.width - 1}, Y2: ${y1 + result.size.height - 1}`
+        str += `<br>W: ${result.size.width}, H: ${result.size.height}`
       } else {
-        if (result.size && width && height) {
-          str = `X1: ${x1}, Y1: ${y1}`
-          str += `<br>X2: ${x1 + result.size.width - 1}, Y2: ${y1 + result.size.height - 1}`
-          str += `<br>W: ${result.size.width}, H: ${result.size.height}`
-        } else {
-          str = `X: ${x1}, Y: ${y1}`
-        }
+        str = `X: ${x1}, Y: ${y1}`
       }
     }
 
-    if (!result.end && width == 0 && height == 0) {
-      const frameSize = this.paintDisplay.format.frameSize
-      if (y1 >= 0 && y1 < frameSize.height && x1 >= 0 && x1 < frameSize.width) {
-        let suffix = ""
-        let address = this.paintDisplay.format.calcAddress(x1, y1, this.getPageIndex())
-        const byteColumn = this.paintDisplay.format.calcByteColumn(x1)
-        const formatName = this.paintDisplay.format.name
-        if (formatName.startsWith("dlores") || formatName.startsWith("dhires")) {
-          if (address >= 0x10000) {
-            suffix = " aux"
-            address -= 0x10000
-          } else {
-            suffix = " main"
-          }
-        }
-        str += `<br>Address: $${address.toString(16).toUpperCase()}` + suffix
-        str += `<br>Column:\xa0\xa0${byteColumn}`
-      }
-    }
-
+    str = this.paintDisplay.format.getDisplayInfo(result, this.isGame ? Tool.Info : this.getTool(), str)
     this.xyPalette.innerHTML = str
   }
 
@@ -646,7 +506,60 @@ export class DisplayView {
     })
   }
 
-  private prepareDisplay() {
+  private buildColorPalette(format: DisplayFormat, foreColor: number, backColor: number) {
+
+    const patternCount = this.paintDisplay.format.patternCount
+
+    this.colorPalette.innerHTML = ""
+    for (let i = 0; i < patternCount; i += 1) {
+
+      const colorButton = document.createElement("div")
+      colorButton.classList.add("color-btn")
+      if (i == foreColor) {
+        colorButton.classList.add("active-fore")
+      }
+      if (i == backColor) {
+        colorButton.classList.add("active-back")
+      }
+      const rowWidth = patternCount == 9 ? 9 : 8
+      colorButton.id = `clr${i}`
+      colorButton.style.gridRow = `${Math.floor(i / rowWidth) + 1}`
+      colorButton.style.gridColumn = `${(i % rowWidth) + 1}`
+
+      const colorSwatch = document.createElement("div")
+      colorSwatch.classList.add("color-swatch")
+      if (patternCount > 9) {
+        colorSwatch.classList.add("small")
+      }
+      colorSwatch.style.backgroundColor = this.paintDisplay.getRgbColorString(i)
+      colorButton.appendChild(colorSwatch)
+
+      const colorHelp = document.createElement("div")
+      colorHelp.innerHTML = ColorHelp
+      colorHelp.classList.add("color-help")
+      colorButton.appendChild(colorHelp)
+
+      this.setHoverElement(colorButton, colorHelp)
+
+      this.colorPalette.appendChild(colorButton)
+
+      colorButton.onmousedown = (e: MouseEvent) => {
+        e.preventDefault()
+        if (e.altKey) {
+          this.setBackColor(i)
+        } else {
+          this.setForeColor(i)
+        }
+        this.paintCanvas.focus()
+      }
+    }
+
+    this.colorPalette.onmousedown = (e: MouseEvent) => {
+      e.preventDefault()
+    }
+  }
+
+  public prepareDisplay() {
 
     // build tool palette
 
@@ -694,61 +607,17 @@ export class DisplayView {
 
     // build color palette based on display format
 
-    const colorCount = this.paintDisplay.format.colorCount
-    let foreColor = colorCount - 1
+    const format = this.paintDisplay.format
+    const patternCount = format.patternCount
+    let foreColor = patternCount - 1
     const backColor = 0
-    if (this.paintDisplay.format.name == "hires") {
-      foreColor = colorCount / 2 - 1
+    if (format.name == "hires") {
+      foreColor = patternCount / 2 - 1
     }
     this.paintDisplay.setForeColor(foreColor)
     this.paintDisplay.setBackColor(backColor)
 
-    this.colorPalette.innerHTML = ""
-    for (let i = 0; i < colorCount; i += 1) {
-
-      const colorButton = document.createElement("div")
-      colorButton.classList.add("color-btn")
-      if (i == foreColor) {
-        colorButton.classList.add("active-fore")
-      }
-      if (i == backColor) {
-        colorButton.classList.add("active-back")
-      }
-      colorButton.id = `clr${i}`
-      colorButton.style.gridRow = `${Math.floor(i / 8) + 1}`
-      colorButton.style.gridColumn = `${(i % 8) + 1}`
-
-      const colorSwatch = document.createElement("div")
-      colorSwatch.classList.add("color-swatch")
-      if (colorCount > 8) {
-        colorSwatch.classList.add("small")
-      }
-      colorSwatch.style.backgroundColor = this.paintDisplay.getRgbColorString(i)
-      colorButton.appendChild(colorSwatch)
-
-      const colorHelp = document.createElement("div")
-      colorHelp.innerHTML = ColorHelp
-      colorHelp.classList.add("color-help")
-      colorButton.appendChild(colorHelp)
-
-      this.setHoverElement(colorButton, colorHelp)
-
-      this.colorPalette.appendChild(colorButton)
-
-      colorButton.onmousedown = (e: MouseEvent) => {
-        e.preventDefault()
-        if (e.altKey) {
-          this.setBackColor(i)
-        } else {
-          this.setForeColor(i)
-        }
-        this.paintCanvas.focus()
-      }
-    }
-
-    this.colorPalette.onmousedown = (e: MouseEvent) => {
-      e.preventDefault()
-    }
+    this.buildColorPalette(format, foreColor, backColor)
 
     document.onselectstart = (e: Event) => {
       if (document.activeElement == this.paintCanvas) {
@@ -899,7 +768,7 @@ export class DisplayView {
         if (curKey == "x") {
           // toggle color between sets
           const foreColor = this.getForeColor()
-          const flipValue = Math.floor(this.paintDisplay.format.colorCount / 2)
+          const flipValue = Math.floor(this.paintDisplay.format.patternCount / 2)
           this.setForeColor(foreColor ^ flipValue)
           this.lastKey = ""
           return

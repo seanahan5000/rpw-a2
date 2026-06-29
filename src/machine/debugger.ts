@@ -3,10 +3,6 @@ import { IMachine } from "../shared/types"
 import { StackEntry, StackRegister, BreakpointEntry } from "../shared/types"
 import { OpMode } from "./isa65xx"
 
-// TODO: clean these up (setting disk images)
-// *** move/abstract this to remove apple dependency ***
-import { AppleMachine, FileDiskImage } from "./apple/apple"
-
 //------------------------------------------------------------------------------
 
 // NOTE: duplicated in lsp_debugger.ts
@@ -34,6 +30,16 @@ type AttachRequest = RequestHeader & {
 
 type SetBreakpointsRequest = RequestHeader & {
   entries: BreakpointEntry[]
+}
+
+type DataBreakpointEntry = {
+  address: number
+  length: number
+  access: number  // 1: read, 2: write, 3: readWrite
+}
+
+type SetDataBreakpointsRequest = RequestHeader & {
+  entries: DataBreakpointEntry[]
 }
 
 type StackResponse = RequestHeader & {
@@ -86,6 +92,11 @@ type ReadRangeResponse = RequestHeader & {
   dataString: string    // actual data read in base64
 }
 
+type WriteOpMemoryRequest = RequestHeader & {
+  opBytes: number[]     // instruction bytes, to determine addressing mode
+  dataString: string    // bytes to write in base64
+}
+
 type WriteMemoryRequest = RequestHeader & {
   dataAddress: number     // direct write address
   dataBank?: number       // optional bank 0, 1, or 2
@@ -102,14 +113,14 @@ type WriteRangeRequest = RequestHeader & {
   dataString: string      // bytes to write in base64
 }
 
-type SetDiskImageRequest = RequestHeader & {
+type SetDataImageRequest = RequestHeader & {
   fullPath?: string     // no path means set drive as empty
   dataString: string    // disk contents in base64
   driveIndex: number
   writeProtected: boolean
 }
 
-type DiskWriteNotification = RequestHeader & {
+type DataWriteNotification = RequestHeader & {
   fullPath: string
   dataString: string    // disk contents in base64
 }
@@ -185,7 +196,7 @@ export class SocketDebugger {
         const req = <LaunchRequest>request
         let error: string | undefined
         if (req.version == ProtocolVersion) {
-          this.machine.update(0, true)
+          this.machine.update(0/*, true*/)
           if (req.stopOnEntry) {
             this.machine.clock.stop("launch")
           } else {
@@ -202,7 +213,7 @@ export class SocketDebugger {
         const req = <AttachRequest>request
         let error: string | undefined
         if (req.version == ProtocolVersion) {
-          this.machine.update(0, true)
+          this.machine.update(0/*, true*/)
           if (req.stopOnEntry || !this.machine.clock.isRunning) {
             this.machine.clock.stop("attach")
           }
@@ -239,6 +250,13 @@ export class SocketDebugger {
       case "setBreakpoints": {
         const req = <SetBreakpointsRequest>request
         this.machine.clock.setBreakpoints(req.entries)
+        this.sendAcknowledge(request)
+        break
+      }
+
+      case "setDataBreakpoints": {
+        const req = <SetDataBreakpointsRequest>request
+        this.machine.setDataBreakpoints(req.entries)
         this.sendAcknowledge(request)
         break
       }
@@ -289,6 +307,12 @@ export class SocketDebugger {
         break
       }
 
+      case "writeOpMemory": {
+        this.onWriteOpMemory(<WriteOpMemoryRequest>request)
+        this.sendAcknowledge(request)
+        break
+      }
+
       case "writeMemory": {
         const response = this.onWriteMemory(<WriteMemoryRequest>request)
         this.sendResponse(request, response)
@@ -301,8 +325,8 @@ export class SocketDebugger {
         break
       }
 
-      case "setDiskImage": {
-        this.onSetDiskImage(<SetDiskImageRequest>request)
+      case "setDataImage": {
+        this.onSetDataImage(<SetDataImageRequest>request)
         this.sendAcknowledge(request)
         break
       }
@@ -343,7 +367,8 @@ export class SocketDebugger {
       const response: StopNotification = {
         command: "cpuStopped",
         reason: stopReason,
-        pc: this.machine.cpu.getPC()
+        pc: this.machine.cpu.getPC(),
+        cpuCycles: this.machine.clock.cpuCycles
       }
       this.applyData(response, response.pc - this.dataRangeSize / 2, this.dataRangeSize)
       this.socket.send(JSON.stringify(response))
@@ -356,16 +381,17 @@ export class SocketDebugger {
         command: "cpuStopped",
         reason: "error",
         pc: this.machine.cpu.getPC(),
+        cpuCycles: this.machine.clock.cpuCycles,
         error: error
       }
       this.socket.send(JSON.stringify(response))
     }
   }
 
-  protected onDiskWrite(fullPath: string, dataBytes: Uint8Array) {
+  protected onDataWrite(fullPath: string, dataBytes: Uint8Array) {
     if (this.socket && this.socket.readyState == WebSocket.OPEN) {
-      const response: DiskWriteNotification = {
-        command: "diskWrite",
+      const response: DataWriteNotification = {
+        command: "dataWrite",
         fullPath,
         dataString: base64.fromByteArray(dataBytes)
       }
@@ -375,8 +401,7 @@ export class SocketDebugger {
 
   private onGetStack(request: RequestHeader): StackResponse {
     // capture current data around PC for each stack frame
-    // TODO: should this be at the time of call instead of current?
-    const entries = this.machine.cpu.getCallStack()
+    const entries = this.machine.cpu.getCallStack(this.machine.clock.cpuCycles)
     for (let entry of entries) {
       const pc = entry.regs[0].value
       this.applyData(entry, pc - this.dataRangeSize / 2, this.dataRangeSize)
@@ -467,6 +492,26 @@ export class SocketDebugger {
     return response
   }
 
+  private onWriteOpMemory(request: WriteOpMemoryRequest): void {
+    const opInfo = this.machine.cpu.computeAddress(request.opBytes, false)
+
+    // don't return bytes for jmp/jsr/bcc or immediate ops
+    if (opInfo.opcode.fc || opInfo.opcode.mode == OpMode.IMM) {
+      return
+    }
+
+    let dataAddress = opInfo.address
+    const indexOffset = this.machine.cpu.getRegIndex(request.opBytes[0])
+    if (indexOffset != undefined) {
+      dataAddress += indexOffset
+    }
+
+    const dataBytes = base64.toByteArray(request.dataString)
+    for (let i = 0; i < dataBytes.length; i += 1) {
+      this.machine.memory.write(dataAddress + i, dataBytes[i], 0)
+    }
+  }
+
   // TODO: eventually need to figure out multiple banks
   //  (maybe look for 24-bit addresses?)
   private onWriteMemory(request: WriteMemoryRequest): WriteMemoryResponse {
@@ -485,7 +530,7 @@ export class SocketDebugger {
       }
     }
     // TODO: don't use cpu cycles directly for Atari
-    const cycleCount = this.machine.cpu.getCycles()
+    const cycleCount = 0  // ***this.machine.cpu.getCycles()
     for (let i = 0; i < length; i += 1) {
       this.machine.memory.write(address + i, data[i], cycleCount)
     }
@@ -504,23 +549,15 @@ export class SocketDebugger {
     this.machine.memory.writeRange(request.dataAddress, data)
   }
 
-  private onSetDiskImage(request: SetDiskImageRequest): void {
-    let diskImage: FileDiskImage | undefined
-
-    if (request.fullPath) {
-      const onWrite = request.writeProtected ? undefined : (dataBytes: Uint8Array) => {
-        this.onDiskWrite(request.fullPath!, dataBytes)
-      }
-      diskImage = new FileDiskImage(
-        request.fullPath,
-        base64.toByteArray(request.dataString),
-        onWrite
-      )
+  private onSetDataImage(request: SetDataImageRequest): void {
+    const onWrite = request.writeProtected || !request.fullPath ? undefined : (dataBytes: Uint8Array) => {
+      this.onDataWrite(request.fullPath!, dataBytes)
     }
-
-    // TODO: add to interface? find device?
-    const machine = <AppleMachine>this.machine
-    machine.setDiskImage(request.driveIndex, diskImage)
+    this.machine.setDiskCartImage(
+      request.fullPath ?? "",
+      base64.toByteArray(request.dataString),
+      request.driveIndex,
+      onWrite)
   }
 }
 

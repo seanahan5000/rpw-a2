@@ -1,6 +1,9 @@
 
 import { AtariMachine } from "./atari"
 
+import { CoordinateInfo } from '../../display/display'
+import { Tool } from '../../display/tools'
+
 //------------------------------------------------------------------------------
 
 export enum MariaReg {
@@ -65,6 +68,229 @@ enum OutputMode {
   m320C = 0b111,
 }
 
+const OutputModeNames = [
+  "160A",
+  "320D",
+  "320A",
+  "160B",
+  "320B",
+  "320C",
+]
+
+//------------------------------------------------------------------------------
+
+type DllistLog = {
+  dllBaseAddr: number     // starting address of 3 byte dlist entries
+  dlists: DlistLog[]
+}
+
+type DlistLog = {
+  dllAddr: number         // address of this 3 byte dlist entry in memory
+  dlInt: boolean
+  holeyMode: number
+  height: number
+  dlBaseAddr: number
+  dlLines: DlLineLog[]
+}
+
+type DlLineLog = {
+  dlist: DlistLog
+  colorRegs: number[]
+  dlSegments: DlSegmentLog[]
+  lineCycles: number
+}
+
+type DlSegmentLog = {
+  dlSegAddr: number
+  modeByte: number
+  graphAddr: number
+  writeMode: number
+  indirectMode: boolean
+  paletteIndex: number
+  byteWidth: number
+  hleft: number             // in 320 pixels, inclusive
+  hright: number            // in 320 pixels, wrapped, exclusive
+  outputMode: number        // implicit capture of readMode
+  srcAddr: number
+  srcIndAddrs?: number[]
+  segData: number[]
+}
+
+
+class MariaLogger {
+
+  public curDllist?: DllistLog
+  private curDlist?: DlistLog
+  private curDlLine?: DlLineLog
+  private curDlSeg?: DlSegmentLog
+
+  constructor(private maria: Maria) {
+  }
+
+  public logDllStart(dllBaseAddr: number) {
+    this.curDllist = {
+      dllBaseAddr,
+      dlists: []
+    }
+  }
+
+  public logDlist(dlist: DlistLog) {
+    if (this.curDllist) {
+      this.curDlist = dlist
+      this.curDllist.dlists.push(dlist)
+    }
+  }
+
+  public logDlLineStart(colorRegs: number[]) {
+    if (this.curDlist) {
+      this.curDlLine = {
+        dlist: this.curDlist!,
+        colorRegs,
+        dlSegments: [],
+        lineCycles: 0
+      }
+      this.curDlist.dlLines.push(this.curDlLine)
+    }
+  }
+
+  public logDlSegment(dlSeg: DlSegmentLog) {
+    this.curDlSeg = dlSeg
+    this.curDlLine!.dlSegments.push(dlSeg)
+  }
+
+  public logSegAddr(srcAddr: number) {
+    this.curDlSeg!.srcAddr = srcAddr
+  }
+
+  public logSegIndAddr(srcAddr: number) {
+    if (this.curDlSeg!.srcIndAddrs == undefined) {
+      this.curDlSeg!.srcIndAddrs = []
+    }
+    this.curDlSeg!.srcIndAddrs.push(srcAddr)
+  }
+
+  public logSegData(segData: number) {
+    this.curDlSeg!.segData.push(segData)
+  }
+
+  public logLineCycles(lineCycles: number) {
+    if (this.curDlLine) {
+      this.curDlLine.lineCycles = lineCycles
+    }
+  }
+
+  public logSegHRight(hright: number) {
+    this.curDlSeg!.hright = hright
+  }
+
+  public logDllEnd(): DllistLog | undefined {
+    const result = this.curDllist
+    this.curDllist = undefined
+    return result
+  }
+}
+
+type DlineInfo = {
+  dllist: DllistLog
+  dlist: DlistLog
+  dlIndex: number
+  y0: number
+  y1: number
+  dlLine: DlLineLog
+  dlSegs: DlSegmentLog[]
+}
+
+function findDlineInfo(x: number, y: number, dllistTop: DllistLog | undefined, dllistBot: DllistLog): DlineInfo | undefined {
+
+  if (x < 0 || y < 0) {
+    return
+  }
+
+  let result: DlineInfo | undefined
+
+  for (const dllist of [dllistTop, dllistBot]) {
+    if (dllist) {
+      let y0 = 0
+      let y1 = 0
+      for (let i = 0; i < dllist.dlists.length; i += 1) {
+        const dlist = dllist.dlists[i]
+        y0 = y1
+        y1 += dlist.height
+        if (y >= y1) {
+          continue
+        }
+        if (y - y0 < dlist.dlLines.length) {
+          result = {
+            dllist: dllist,
+            dlist: dlist,
+            dlIndex: i,
+            y0,
+            y1,
+            dlLine: dlist.dlLines[y - y0],
+            dlSegs: []
+          }
+        }
+        break
+      }
+      if (result) {
+        break
+      }
+    }
+  }
+
+  if (result) {
+    for (const dseg of result.dlLine.dlSegments) {
+      if (dseg.hleft < dseg.hright) {
+        if (x >= dseg.hleft && x < dseg.hright) {
+          result.dlSegs.push(dseg)
+        }
+      } else {
+        if (x >= dseg.hleft || x < dseg.hright) {
+          result.dlSegs.push(dseg)
+        }
+      }
+    }
+  }
+
+  return result
+}
+
+function buildYAlignment(dllistTop: DllistLog | undefined, dllistBot: DllistLog): number[] {
+  const result: number[] = []
+  let nextY = 0
+  if (dllistTop) {
+    for (const dlist of dllistTop.dlists) {
+      let y = nextY
+      if (dlist.dlInt) {
+        y += 0x1000
+      }
+      result.push(y)
+
+      if (dlist.dlLines.length < dlist.height) {
+        break
+      }
+      nextY += dlist.height
+    }
+  }
+
+  let restartY = nextY
+  nextY = 0
+
+  for (const dlist of dllistBot.dlists) {
+    let y = nextY
+    if (y >= restartY) {
+      if (dlist.dlInt) {
+        y += 0x1000
+      }
+      result.push(y)
+    }
+    nextY += dlist.height
+  }
+
+  result.push(nextY)
+  return result
+}
+
 //------------------------------------------------------------------------------
 
 export class Maria {
@@ -72,40 +298,97 @@ export class Maria {
   private machine: AtariMachine
 
   private registers: number[] = new Array(0x20)
-  private colorRegs: number[] = new Array(0x20)
+  public colorRegs: number[] = new Array(0x20)
   private scanline: number[] = new Array(0x200)
+
+  private logger?: MariaLogger
+  public dllistLog?: DllistLog
 
   constructor(machine: AtariMachine) {
     this.machine = machine
+    // NOTE: For now, always create this.  If performance issues
+    //  come up, then set to undefined by default.
+    this.logger = new MariaLogger(this)
     this.reset()
+  }
+
+  // TODO: move this
+  public getDisplayInfo(coordInfo: CoordinateInfo, tool: Tool, defaultStr: string): string {
+    let str = defaultStr
+    if (this.logger && this.dllistLog) {
+      const x = coordInfo.start?.x ?? -1
+      const y = coordInfo.start?.y ?? -1
+      const result = findDlineInfo(x, y, this.logger?.curDllist, this.dllistLog)
+      if (result?.dlLine) {
+
+        // dlist info
+        // dl:0 @ $0000 -> $0000 h:8 INT hm16
+        const dlist = result.dlist
+        str += `<br>dl:${result.dlIndex}` +
+               ` @ $${dlist.dllAddr.toString(16)}` +
+               `->$${dlist.dlBaseAddr.toString(16)}` +
+               ` h:${dlist.height}` +
+               `${dlist.dlInt ? " INT" : ""}` +
+               (dlist.holeyMode ? ` hm${dlist.holeyMode * 8}` : "")
+
+        // dline info
+        //  cyc:999 pal: (*** HTML color boxes? *** use line mode to pixel 8 or 24 colors)
+
+        // dseg info
+        if (result.dlSegs.length > 0) {
+          const seg = result.dlSegs[0]
+          const index = result.dlLine.dlSegments.indexOf(seg)
+          str += "<br>"
+              + `s:${index}`
+              + ` @ $${seg.dlSegAddr.toString(16)}`
+              + `->$${seg.graphAddr.toString(16)}`
+              + ` l:${seg.hleft} r:${seg.hright}`
+              + ` m:${OutputModeNames[seg.outputMode]}`
+          if (seg.indirectMode) {
+            str += "i"
+          }
+        }
+      }
+    }
+    return str
+  }
+
+  public getAlignmentY(): number[] | number {
+    if (this.logger && this.dllistLog) {
+      return buildYAlignment(this.logger?.curDllist, this.dllistLog)
+    }
+    return 8
   }
 
   public reset() {
 
-    // control register settings
-    this.colorKill = false
-    this.dmaEnabled = false
-    this.charWidth = 1
-    this.blackBorder = false
-    this.kangaroo = false
-    this.readMode = 0
+    // NOTE: The Maria chip does no resetting of state
+    //  itself, so this initialization is incorrect.
 
-    // display list list entry
-    this.dlInt = false
-    this.holeyMode = 0
-    this.offset = 0
-    this.dlAddr = 0
+    // // control register settings
+    // this.colorKill = false
+    // this.dmaEnabled = false
+    // this.charWidth = 1
+    // this.blackBorder = false
+    // this.kangaroo = false
+    // this.readMode = 0
 
-    // display list entry
-    this.lineCycles = 0
-    this.graphAddr = 0
-    this.writeMode = 0
-    this.indirectMode = false
-    this.paletteIndex = 0
-    this.width = 0
-    this.horzPos = 0
+    // // display list list entry
+    // this.dlInt = false
+    // this.holeyMode = 0
+    // this.offset = 0
+    // this.dlAddr = 0
 
-    this.colorRegs.fill(0xEE)
+    // // display list entry
+    // this.lineCycles = 0
+    // this.graphAddr = 0
+    // this.writeMode = 0
+    // this.indirectMode = false
+    // this.paletteIndex = 0
+    // this.width = 0
+    // this.horzPos = 0
+
+    this.colorRegs = new Array(0x20).fill(0xEE)
   }
 
   public getState(): any {
@@ -134,6 +417,10 @@ export class Maria {
     state.registers = [...this.registers]
     state.colorRegs = [...this.colorRegs]
     state.scanline = [...this.scanline]
+
+    // TODO: is it enough to just capture the object?
+    //  Or does it need to be completely flattened?
+    state.dllist = this.dllistLog
     return state
   }
 
@@ -162,6 +449,8 @@ export class Maria {
     this.registers = [...state.registers]
     this.colorRegs = [...state.colorRegs]
     this.scanline = [...state.scanline]
+
+    this.dllistLog = state.dllist
   }
 
   public readConst(address: number): number {
@@ -213,7 +502,9 @@ export class Maria {
         return this.colorRegs[address - MariaReg.backgrnd]
 
       default:
-        // *** invalid register read
+        if (cycleCount == 0) {
+          return this.registers[address]
+        }
         return 0xEE
     }
   }
@@ -223,7 +514,7 @@ export class Maria {
   private charWidth!: number
   private blackBorder!: boolean
   private kangaroo!: boolean
-  private readMode!: number
+  public  readMode!: number
 
   public write(address: number, value: number, cycleCount: number) {
 
@@ -249,7 +540,7 @@ export class Maria {
       case MariaReg.audf1:
       case MariaReg.audv0:
       case MariaReg.audv1:
-        this.machine.writeAudio(address, value)
+        this.machine.writeTiaAudio(address, value)
         break
 
       case MariaReg.wsync:
@@ -309,6 +600,9 @@ export class Maria {
       case MariaReg.p7c1:
       case MariaReg.p7c2:
       case MariaReg.p7c3:
+        // NOTE: Treat colorRegs as immutable so logging
+        //  can snapshot current colorRegs by reference.
+        this.colorRegs = [...this.colorRegs]
         this.colorRegs[address - MariaReg.backgrnd] = value
         return
 
@@ -352,13 +646,19 @@ export class Maria {
     if (this.dmaEnabled) {
 
       if (firstLine) {
+        this.logger?.logDllStart(this.dllAddr)
         this.curDllAddr = this.dllAddr
         this.loadList()
       }
 
+      this.logger?.logDlLineStart(this.colorRegs)
+
       let dlAddr = this.dlAddr
       this.lineCycles += 9    // DMA startup time
+
       while (this.lineCycles < 454) {
+
+        const dlSegAddr = dlAddr
 
         this.graphAddr = this.readDma(dlAddr++, 2)
         const modeByte = this.readDma(dlAddr++, 2)
@@ -373,7 +673,6 @@ export class Maria {
           this.indirectMode = (modeByte & 0x20) != 0
           palWidth = this.readDma(dlAddr++, 2)
         } else {
-          this.writeMode = 0
           this.indirectMode = false
           palWidth = modeByte
         }
@@ -382,6 +681,22 @@ export class Maria {
         this.horzPos = this.readDma(dlAddr++, 2)
 
         const outputMode = (this.writeMode << 2) + this.readMode
+
+        this.logger?.logDlSegment({
+          dlSegAddr,
+          modeByte,
+          graphAddr: this.graphAddr,
+          writeMode: this.writeMode,
+          indirectMode: this.indirectMode,
+          paletteIndex: this.paletteIndex,
+          byteWidth: this.width,
+          hleft: this.horzPos << 1,
+          hright: 0,
+          outputMode,
+          srcAddr: 0,
+          segData: []
+        })
+
         switch (outputMode) {
           case OutputMode.m160A:
             this.buildSegment160A()
@@ -405,26 +720,80 @@ export class Maria {
       }
 
       this.lineCycles += 7    // DMA shutdown time - 16 total
+      this.logger?.logLineCycles(this.lineCycles - lineCycles)
 
       this.offset -= 1
       if (this.offset < 0) {
-        if (this.dlInt) {
-          interrupt = true
-        }
         this.loadList()       // DMA shutdown time - 24 total
+        interrupt = this.dlInt
       }
     }
 
     // *** check this -- atari.ts instead? ***
     this.machine.cpu.clearHalt()
-    return { scanline: this.scanline, lineCycles: this.lineCycles, interrupt }
+    return {
+      scanline: this.scanline,
+      lineCycles: this.lineCycles,
+      interrupt
+    }
   }
 
-  public in320Mode(): boolean {
-    return this.readMode >= 2
+  public onFrameEnd() {
+    this.dllistLog = this.logger?.logDllEnd()
   }
+
+//------------------------------------------------------------------------------
+
+//  15 vblank lines
+//  10 background lines   (displayArea.top == 16-1 ...
+// 223 active lines       (visibleArea 26-1 to 248-1)
+//  10 background lines   ... displayArea.bottom == 258-1)
+//   4 vblank lines       (total = 262)
+
+// dllist processing starts at displayArea.top
+// vblank off at displayArea.top
+// vblank on after displayArea.bottom (+3 for Pole Position II)
+
+// my visible lines = displayArea = 243
+
+
+// - think about break-on-scanline
+
+
+// *** 1-based values ***
+
+//rect maria_displayArea = {0, 16, 319, 258};
+// var maria_displayArea = new Rect(0, 17, 319, 258);
+
+//rect maria_visibleArea = {0, 26, 319, 248};
+// var maria_visibleArea = new Rect(0, 26, 319, 248);
+
+    // if (maria_scanline == maria_displayArea.top) {
+    //   memory_ram[MSTAT] = 0;
+    // }
+    // else if (maria_scanline == (maria_displayArea.bottom - prosystem_mstat_adjust /* PPII Hack */)) {
+    //   memory_ram[MSTAT] = 128;
+    // }
+
+// prosystem_scanlines = 262
+
+  // for (maria_scanline = 1; maria_scanline <= prosystem_scanlines; maria_scanline++) {
+
+    // vblank ends at line 16 (15 blank)
+  //   if (maria_scanline == maria_displayArea.top) {
+  //     memory_ram[MSTAT] = 0;
+  //   }
+  //   else if (maria_scanline == (maria_displayArea.bottom - prosystem_mstat_adjust /* PPII Hack */)) {
+  //     memory_ram[MSTAT] = 128;
+  //   }
+
+  //   // ***
+  // }
+
+//------------------------------------------------------------------------------
 
   private loadList() {
+    const startDllAddr = this.curDllAddr
     const value = this.readDma(this.curDllAddr++, 2)
     this.dlInt = (value & 0x80) != 0
     this.holeyMode = (value >> 5) & 0x3
@@ -432,6 +801,15 @@ export class Maria {
     this.dlAddr = this.readDma(this.curDllAddr++, 2) << 8
     this.dlAddr += this.readDma(this.curDllAddr++, 2)
     // TODO: verify that this.dlAddr is in RAM, else throw error
+
+    this.logger?.logDlist({
+      dllAddr: startDllAddr,
+      dlInt: this.dlInt,
+      holeyMode: this.holeyMode,
+      height: this.offset + 1,
+      dlBaseAddr: this.dlAddr,
+      dlLines: []
+    })
 
     // Add extra 2 cycles to match 8 total cycles measured when next zone is loaded.
     // https://forums.atariage.com/topic/224025-7800-hardware-facts/#comment-2983361
@@ -447,23 +825,27 @@ export class Maria {
     let h = this.horzPos << 1
     const paletteBits = this.paletteIndex << 2
 
-    let srcAddr: number
+    let srcBase!: number
+    let srcAddr!: number
     let byteCount: number
     if (this.indirectMode) {
-      srcAddr = (this.registers[MariaReg.charbase] + this.offset) << 8
+      srcBase = (this.registers[MariaReg.charbase] + this.offset) << 8
+      this.logger?.logSegAddr(srcBase)
       byteCount = this.charWidth
     } else {
       srcAddr = this.graphAddr + (this.offset << 8)
+      this.logger?.logSegAddr(srcAddr)
       byteCount = 1
     }
 
     for (let i = 0; i < this.width; i += 1) {
       if (this.indirectMode) {
-        srcAddr = (srcAddr & 0xff00) + this.readDma(this.graphAddr + i, 3)
+        srcAddr = srcBase! + this.readDma(this.graphAddr + i, 3)
+        this.logger?.logSegIndAddr(srcAddr)
       }
       for (let b = 0; b < byteCount; b += 1) {
-        if ((this.holeyMode == 1 && (srcAddr & 0x8800) == 0x8800) ||
-            (this.holeyMode == 2 && (srcAddr & 0x9000) == 0x9000)) {
+        if ((this.holeyMode == 1 && (srcAddr! & 0x8800) == 0x8800) ||
+            (this.holeyMode == 2 && (srcAddr! & 0x9000) == 0x9000)) {
           h = (h + 8) & 0x1ff
           srcAddr++
 
@@ -477,6 +859,7 @@ export class Maria {
         }
 
         const data = this.readDma(srcAddr++, 3)
+        this.logger?.logSegData(data)
 
         let bits = (data >> 6) & 3
         if (bits != 0) {
@@ -511,25 +894,31 @@ export class Maria {
         h = (h + 2) & 0x1ff
       }
     }
+
+    this.logger?.logSegHRight(h)
   }
 
   private buildSegment160B() {
     let h = this.horzPos << 1
     const paletteBits = (this.paletteIndex & 0x04) << 2
 
-    let srcAddr: number
+    let srcBase!: number
+    let srcAddr!: number
     let byteCount: number
     if (this.indirectMode) {
-      srcAddr = (this.registers[MariaReg.charbase] + this.offset) << 8
+      srcBase = (this.registers[MariaReg.charbase] + this.offset) << 8
       byteCount = this.charWidth
+      this.logger?.logSegAddr(srcBase)
     } else {
       srcAddr = this.graphAddr + (this.offset << 8)
       byteCount = 1
+      this.logger?.logSegAddr(srcAddr)
     }
 
     for (let i = 0; i < this.width; i += 1) {
       if (this.indirectMode) {
-        srcAddr = (srcAddr & 0xff00) + this.readDma(this.graphAddr + i, 3)
+        srcAddr = srcBase + this.readDma(this.graphAddr + i, 3)
+        this.logger?.logSegAddr(srcAddr)
       }
       for (let b = 0; b < byteCount; b += 1) {
         if ((this.holeyMode == 1 && (srcAddr & 0x8800) == 0x8800) ||
@@ -543,6 +932,7 @@ export class Maria {
         }
 
         const data = this.readDma(srcAddr++, 3)
+        this.logger?.logSegData(data)
 
         let bits = (data >> 6) & 3
         if (bits != 0) {
@@ -569,22 +959,28 @@ export class Maria {
         h = (h + 2) & 0x1ff
       }
     }
+
+    this.logger?.logSegHRight(h)
   }
 
   private buildSegment320A() {
     let h = this.horzPos << 1
     const paletteBits = (this.paletteIndex << 2) | 2
 
-    let srcAddr
+    let srcBase!: number
+    let srcAddr!: number
     if (this.indirectMode) {
-      srcAddr = (this.registers[MariaReg.charbase] + this.offset) << 8
+      srcBase = (this.registers[MariaReg.charbase] + this.offset) << 8
+      this.logger?.logSegAddr(srcBase)
     } else {
       srcAddr = this.graphAddr + (this.offset << 8)
+      this.logger?.logSegAddr(srcAddr)
     }
 
     for (let i = 0; i < this.width; i += 1) {
       if (this.indirectMode) {
-        srcAddr = (srcAddr & 0xff00) + this.readDma(this.graphAddr + i, 3)
+        srcAddr = srcBase + this.readDma(this.graphAddr + i, 3)
+        this.logger?.logSegIndAddr(srcAddr)
       }
 
       if ((this.holeyMode == 1 && (srcAddr & 0x8800) == 0x8800) ||
@@ -598,6 +994,7 @@ export class Maria {
       }
 
       const data = this.readDma(srcAddr++, 3)
+      this.logger?.logSegData(data)
       const value = this.colorRegs[paletteBits]
 
       if ((data & 0xc0) != 0) {
@@ -667,27 +1064,32 @@ export class Maria {
         this.scanline[h + 1] = this.colorRegs[0]
       }
       h = (h + 2) & 0x1ff
-
     }
+
+    this.logger?.logSegHRight(h)
   }
 
   private buildSegment320B() {
     let h = this.horzPos << 1
     const paletteBits = (this.paletteIndex & 0x04) << 2
 
-    let srcAddr: number
+    let srcBase!: number
+    let srcAddr!: number
     let byteCount: number
     if (this.indirectMode) {
-      srcAddr = (this.registers[MariaReg.charbase] + this.offset) << 8
+      srcBase = (this.registers[MariaReg.charbase] + this.offset) << 8
       byteCount = this.charWidth
+      this.logger?.logSegAddr(srcBase)
     } else {
       srcAddr = this.graphAddr + (this.offset << 8)
       byteCount = 1
+      this.logger?.logSegAddr(srcAddr)
     }
 
     for (let i = 0; i < this.width; i += 1) {
       if (this.indirectMode) {
-        srcAddr = (srcAddr & 0xff00) + this.readDma(this.graphAddr + i, 3)
+        srcAddr = srcBase + this.readDma(this.graphAddr + i, 3)
+        this.logger?.logSegIndAddr(srcAddr)
       }
       for (let b = 0; b < byteCount; b += 1) {
         if ((this.holeyMode == 1 && (srcAddr & 0x8800) == 0x8800) ||
@@ -701,6 +1103,7 @@ export class Maria {
         }
 
         const data = this.readDma(srcAddr++, 3)
+        this.logger?.logSegData(data)
 
         let bits = ((data >> 6) & 2) | ((data >> 3) & 1)
         if (bits != 0) {
@@ -743,22 +1146,28 @@ export class Maria {
         h = (h + 1) & 0x1ff
       }
     }
+
+    this.logger?.logSegHRight(h)
   }
 
   private buildSegment320C() {
     let h = this.horzPos << 1
     const paletteBits = ((this.paletteIndex & 4) << 2) | 2
 
-    let srcAddr: number
+    let srcBase!: number
+    let srcAddr!: number
     if (this.indirectMode) {
-      srcAddr = (this.registers[MariaReg.charbase] + this.offset) << 8
+      srcBase = (this.registers[MariaReg.charbase] + this.offset) << 8
+      this.logger?.logSegAddr(srcBase)
     } else {
       srcAddr = this.graphAddr + (this.offset << 8)
+      this.logger?.logSegAddr(srcAddr)
     }
 
     for (let i = 0; i < this.width; i += 1) {
       if (this.indirectMode) {
-        srcAddr = (srcAddr & 0xff00) + this.readDma(this.graphAddr + i, 3)
+        srcAddr = srcBase + this.readDma(this.graphAddr + i, 3)
+        this.logger?.logSegIndAddr(srcAddr)
       }
       if ((this.holeyMode == 1 && (srcAddr & 0x8800) == 0x8800) ||
           (this.holeyMode == 2 && (srcAddr & 0x9000) == 0x9000)) {
@@ -771,8 +1180,8 @@ export class Maria {
       }
 
       const data = this.readDma(srcAddr++, 3)
-
-      let value = this.colorRegs[((data >> 2) & 3) | paletteBits]
+      this.logger?.logSegData(data)
+      let value = this.colorRegs[((data << 0) & 0x0C) | paletteBits]
 
       if ((data & 0x80) != 0) {
         this.scanline[h] = value
@@ -788,7 +1197,7 @@ export class Maria {
       }
       h = (h + 1) & 0x1ff
 
-      value = this.colorRegs[((data >> 0) & 3) | paletteBits]
+      value = this.colorRegs[((data << 2) & 0x0C) | paletteBits]
 
       if ((data & 0x20) != 0) {
         this.scanline[h] = value
@@ -804,6 +1213,8 @@ export class Maria {
       }
       h = (h + 1) & 0x1ff
     }
+
+    this.logger?.logSegHRight(h)
   }
 
   private buildSegment320D() {
@@ -812,19 +1223,23 @@ export class Maria {
     const pbit0 = (this.paletteIndex >> 0) & 1
     const pbit1 = (this.paletteIndex >> 1) & 1
 
-    let srcAddr: number
+    let srcBase!: number
+    let srcAddr!: number
     let byteCount: number
     if (this.indirectMode) {
-      srcAddr = (this.registers[MariaReg.charbase] + this.offset) << 8
+      srcBase = (this.registers[MariaReg.charbase] + this.offset) << 8
+      this.logger?.logSegAddr(srcBase)
       byteCount = this.charWidth
     } else {
       srcAddr = this.graphAddr + (this.offset << 8)
+      this.logger?.logSegAddr(srcAddr)
       byteCount = 1
     }
 
     for (let i = 0; i < this.width; i += 1) {
       if (this.indirectMode) {
-        srcAddr = (srcAddr & 0xff00) + this.readDma(this.graphAddr + i, 3)
+        srcAddr = srcBase + this.readDma(this.graphAddr + i, 3)
+        this.logger?.logSegIndAddr(srcAddr)
       }
       for (let b = 0; b < byteCount; b += 1) {
         if ((this.holeyMode == 1 && (srcAddr & 0x8800) == 0x8800) ||
@@ -838,6 +1253,7 @@ export class Maria {
         }
 
         const data = this.readDma(srcAddr++, 3)
+        this.logger?.logSegData(data)
 
         let bits = ((data >> 6) & 2) + pbit1
         if (bits != 0) {
@@ -904,7 +1320,66 @@ export class Maria {
         h = (h + 1) & 0x1ff
       }
     }
+
+    this.logger?.logSegHRight(h)
   }
 }
+
+//------------------------------------------------------------------------------
+
+// from GCC docs:
+//  DMA Cycle Timing
+//  Short Header    8 cycles
+//  Long Header 	   10 cycles
+//  Graphics, pre byte 3 cycles
+//  Indirect map fetch   3 cycles (plus one or two graphics fetches)
+//  DMA startup 5-12 cycles
+//  DMA shutdown, short 13-17 cycles
+//  DMA shutdown, long 19-23 cycles (list-list fetch)
+//  End-of-Vblank DMA 7+ cycles
+//
+// 16 vblank
+// 242 active lines (25 + 192 + 25)
+// 4 vblank
+//
+//    H   B                     B    H
+// H  B   O                     O    B
+// S  L   R                     R    L
+// Y  A   D                     D    A
+// N  N   E                     E    N
+// C  K   R                     R    K
+// +--+---+----+----------------+----+----+
+// 0  34  68   93               413  440  452
+// (other docs claim 454, not 452)
+
+
+// DMA start-up and shutdown, last line in zone     24 cycles*
+// DMA start-up and shutdown, other lines in zone   16 cycles
+// process 4-byte DL header	                        8 cycles
+// process 5-byte DL header	                        10 cycles
+// direct graphics data read	                      3 cycles per byte of data read
+// indirect 1-byte read	                            6 cycles
+// indirect 2-byte read	                            9 cycles
+
+// * The DMA start-up may be delayed if the 6502 clock isn't at the end
+//  of a cycle when DMA begins. Up to 3 additional cycles are lost for
+//  DMA if the 6502 is at normal speed, or up to 5 additional cycles are
+//  lost if the 6502 happens to be slowed down for TIA access. DMA start-up
+//  delay usually occurs every other scanline, since a scanline length is
+//  113.5 6502 cycles long.
+
+// If holey DMA is enabled and graphics reads would reside in a DMA hole,
+//  only 3 cycles of penalty for the graphic read is incurred, whatever the
+//  sprite width is.
+
+// The end of VBLANK is made up of a DMA startup plus a Long shutdown.
+
+// !!! DMA does not begin until 7 CPU (1.79 MHz) cycles into each scan line.
+//  The significance of this is that there is enough time to change a color,
+//  or change CTRL before DMA begins, and during HBLANK (before display begins).
+//  This figure should, however, be included in any DMA usage calculations.
+
+// Another timing consideration is there is one MPU (7.16 MHz) cycle between
+//  DMA shutdown and generation of a DLI.
 
 //------------------------------------------------------------------------------

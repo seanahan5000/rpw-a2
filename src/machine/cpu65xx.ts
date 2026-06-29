@@ -4,8 +4,7 @@
 //  - 6502: BRK instruction clears D flag like fixed 65C02 dpoes
 //  - 65C02: ADC and SBC do not add extra cycle in decimal mode
 //  - 65C02: extra write still happens in read-modify-write operations
-
-// *** remove fetchOpcode at start of each instruction ***
+//  - 65C02: dummy reads have not been cleaned up
 
 import { ICpu, ICpuEvents, ICpuIsa, IMemory, StackEntry, StackRegister } from "../shared/types"
 import { OpInfo } from "../shared/types"
@@ -43,7 +42,7 @@ export class Cpu65xx implements ICpu {
   private Z: number = 0
   private C: number = 0
 
-  private T: number = 0
+  private Tx: number = 0        // *** rename this ***
   private opcode: number = -1
   private instruction: Instruction = []
   private curCycleCount: number = 0
@@ -85,7 +84,7 @@ export class Cpu65xx implements ICpu {
     state.X = this.X,
     state.Y = this.Y,
     state.PS = this.getStatusBits()
-    state.T = this.T
+    state.T = this.Tx
     state.pendingNMI = this.pendingNMI
     state.pendingIRQ = this.pendingIRQ
     state.pendingHalt = this.pendingHalt
@@ -105,7 +104,7 @@ export class Cpu65xx implements ICpu {
     this.X = state.X
     this.Y = state.Y
     this.setStatusBits(state.PS)
-    this.T = state.T
+    this.Tx = state.T
     this.pendingNMI = state.pendingNMI
     this.pendingIRQ = state.pendingIRQ
     this.pendingHalt = state.pendingHalt
@@ -125,7 +124,7 @@ export class Cpu65xx implements ICpu {
     this.I = 1
     this.PC = this.read(RESET_VECTOR) | (this.read(RESET_VECTOR + 1) << 8)
     this.vstack.reset()
-    this.fetchNextOpcode()
+    this.prefetchNextOpcode()
   }
 
   public requestHalt() {
@@ -157,7 +156,11 @@ export class Cpu65xx implements ICpu {
     this.curCycleCount = cycleCount
     this.curCycleScale = cycleScale
 
-    // NOTE: assume T == 0 always true here
+    // TODO: This needs to be done here because memory
+    //  may have changed under the PC since the last
+    //  prefetch.
+    // *** this.prefetchNextOpcode()
+
     if (this.pendingNMI) {
       this.takeNMI()
     } else if (this.pendingIRQ) {
@@ -165,12 +168,11 @@ export class Cpu65xx implements ICpu {
       this.takeIRQ()
     }
 
+    this.Tx = 0
     do {
-      // advance clock a single cycle
-      this.T += 1
       this.curCycleCount += cycleScale
-      this.instruction[this.T]()
-    } while (this.T != 0)
+      this.instruction[this.Tx++]()
+    } while (this.Tx != 0)
 
     this.curCycleScale = 0
     cycleDelta = this.curCycleCount - cycleDelta
@@ -181,15 +183,12 @@ export class Cpu65xx implements ICpu {
   // state
 
   public getPC(): number {
-    // NOTE: Instruction prefetch has always advanced
-    //  the PC by a byte so subtract it out here.
-    return (this.PC - 1) & 0xFFFF
+    return this.PC
   }
 
   public setPC(address: number) {
     this.PC = address
-    this.T = -1
-    this.fetchNextOpcode()
+    this.prefetchNextOpcode()
   }
 
   public setRegister(reg: StackRegister) {
@@ -283,10 +282,7 @@ export class Cpu65xx implements ICpu {
   }
 
   private takeNMI() {
-    // NOTE: assume T == 0 always true here
     this.instruction = this.NMI()
-    this.T = 1
-    this.PC = (this.PC - 1) & 0xffff
     this.pendingNMI = false
   }
 
@@ -295,20 +291,20 @@ export class Cpu65xx implements ICpu {
   }
 
   private takeIRQ() {
-    // NOTE: assume T == 0 always true here
     this.instruction = this.IRQ()
-    this.T = 1
-    this.PC = (this.PC - 1) & 0xffff
     this.pendingIRQ = false
   }
 
   // fetch functions
 
-  private fetchNextOpcode = () => {
+  private fetchOpcode = () => {
+    this.PC = (this.PC + 1) & 0xffff
+  }
+
+  private prefetchNextOpcode = () => {
     this.opcode = this.read(this.PC)
     this.instruction = this.instructions[this.opcode]
-    this.T = 0
-    this.PC = (this.PC + 1) & 0xffff
+    this.Tx = 0
   }
 
   private fetchAndDiscard = () => {
@@ -378,8 +374,6 @@ export class Cpu65xx implements ICpu {
     this.BA = (this.BA + this.BACarry) & 0xffff
   }
 
-  // *** rename fetch -> read ***
-
   private fetchIAL = () => {
     this.IA = this.read(this.PC)
     this.PC = (this.PC + 1) & 0xffff
@@ -440,11 +434,11 @@ export class Cpu65xx implements ICpu {
 
   private implied = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      () => {
+      this.fetchOpcode,                 // 1
+      () => {                           // 2
+        this.fetchAndDiscard()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -452,11 +446,11 @@ export class Cpu65xx implements ICpu {
   // read #$FF
   private immRead = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchDataFromImm,
-      () => {
+      this.fetchOpcode,                 // 1
+      () => {                           // 2
+        this.fetchDataFromImm()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -464,12 +458,12 @@ export class Cpu65xx implements ICpu {
   // read $FF
   private zpageRead = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,
-      this.fetchDataFromAD,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      () => {                           // 3
+        this.fetchDataFromAD()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -486,16 +480,16 @@ export class Cpu65xx implements ICpu {
 
   private zpageXYRead = (operation: Function, addIndex: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchDataFromBA,
-      () => {
-        addIndex()
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
         this.fetchDataFromBA()
+        addIndex()
       },
-      () => {
+      () => {                           // 4
+        this.fetchDataFromBA()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -503,13 +497,13 @@ export class Cpu65xx implements ICpu {
   // read $FFFF
   private absRead = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,
-      this.fetchADH,
-      this.fetchDataFromAD,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchADH,                    // 3
+      () => {                           // 4
+        this.fetchDataFromAD()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -526,25 +520,24 @@ export class Cpu65xx implements ICpu {
 
   private absXYRead = (operation: Function, addIndex: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchBAH,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
+        this.fetchBAH()
         addIndex()
+      },
+      () => {                           // 4
         this.fetchDataFromBA()
         this.addBACarryToBAH()
-      },
-      () => {
-        if (this.BACarry) {
-          this.fetchDataFromBA()
-        } else {
+        if (!this.BACarry) {
           operation()
-          this.fetchNextOpcode()
+          this.prefetchNextOpcode()
         }
       },
-      () => {
+      () => {                           // 5
+        this.fetchDataFromBA()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -552,21 +545,21 @@ export class Cpu65xx implements ICpu {
   // read ($FF,X)
   private indXRead = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchDataFromBA,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
+        this.fetchDataFromBA()
         this.addXtoBAL()
-        this.fetchADLFromBA()
       },
-      () => {
+      this.fetchADLFromBA,              // 4
+      () => {                           // 5
         this.add1toBAL()
         this.fetchADHFromBA()
       },
-      this.fetchDataFromAD,
-      () => {
+      () => {                           // 6
+        this.fetchDataFromAD()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -574,29 +567,26 @@ export class Cpu65xx implements ICpu {
   // read ($FF),Y
   private indYRead = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchIAL,
-      this.fetchBALFromIA,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchIAL,                    // 2
+      this.fetchBALFromIA,              // 3
+      () => {                           // 4
         this.add1toIAL()
         this.fetchBAHFromIA()
-      },
-      () => {
         this.addYtoBAL()
+      },
+      () => {                           // 5
         this.fetchDataFromBA()
         this.addBACarryToBAH()
-      },
-      () => {
-        if (this.BACarry) {
-          this.fetchDataFromBA()
-        } else {
+        if (!this.BACarry) {
           operation()
-          this.fetchNextOpcode()
+          this.prefetchNextOpcode()
         }
       },
-      () => {
+      () => {                           // +1
+        this.fetchDataFromBA()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -604,17 +594,17 @@ export class Cpu65xx implements ICpu {
   // read ($FF)
   private indZRead = (operation: Function) => {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchIAL,
-      this.fetchBALFromIA,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchIAL,                    // 2
+      this.fetchBALFromIA,              // 3
+      () => {                           // 4
         this.add1toIAL()
         this.fetchBAHFromIA()
       },
-      this.fetchDataFromBA,
-      () => {
+      () => {                           // 5
+        this.fetchDataFromBA()
         operation()
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -622,13 +612,13 @@ export class Cpu65xx implements ICpu {
   // write $FF
   private zpageWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      () => {                           // 3
         operation()
         this.writeDataToAD()
+        this.prefetchNextOpcode()
       },
-      this.fetchNextOpcode
     ]
   }
 
@@ -644,29 +634,31 @@ export class Cpu65xx implements ICpu {
 
   private zpageXYWrite = (operation: Function, addIndex: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchDataFromBA,
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
       () => {
+        this.fetchDataFromBA()          // 3
         addIndex()
+      },
+      () => {                           // 4
         operation()
         this.writeDataToBA()
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   // write $FFFF
   private absWrite = (operation: Function) => {
     return [
-        this.fetchNextOpcode,
-        this.fetchADL,
-        this.fetchADH,
-        () => {
-          operation()
-          this.writeDataToAD()
-        },
-        this.fetchNextOpcode
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchADH,                    // 3
+      () => {                           // 4
+        operation()
+        this.writeDataToAD()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
@@ -682,153 +674,165 @@ export class Cpu65xx implements ICpu {
 
   private absXYWrite = (operation: Function, addIndex: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchBAH,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
+        this.fetchBAH()
         addIndex()
+      },
+      () => {                           // 4
         this.fetchDataFromBA()
         this.addBACarryToBAH()
       },
-      () => {
+      () => {                           // 5
         operation()
         this.writeDataToBA()
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   // write ($FF,X)
   private indXWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchDataFromBA,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
+        this.fetchDataFromBA()
         this.addXtoBAL()
-        this.fetchADLFromBA()
       },
-      () => {
+      this.fetchADLFromBA,              // 4
+      () => {                           // 5
         this.add1toBAL()
         this.fetchADHFromBA()
       },
-      () => {
+      () => {                           // 6
         operation()
         this.writeDataToAD()
+        this.prefetchNextOpcode()
       },
-      this.fetchNextOpcode
     ]
   }
 
   // write ($FF),Y
   private indYWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchIAL,        // 1
-      this.fetchBALFromIA,  // 2
-      () => {               // 3
+      this.fetchOpcode,                 // 1
+      this.fetchIAL,                    // 2
+      this.fetchBALFromIA,              // 3
+      () => {                           // 4
         this.add1toIAL()
         this.fetchBAHFromIA()
-      },
-      () => {               // 4
         this.addYtoBAL()
+      },
+      () => {                           // 5
         this.fetchDataFromBA()
         this.addBACarryToBAH()
       },
-      () => {               // 5
+      () => {                           // 6
         operation()
         this.writeDataToBA()
+        this.prefetchNextOpcode()
       },
-      this.fetchNextOpcode  // 6
     ]
   }
 
   // write ($FF)
   private indZWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchIAL,
-      this.fetchBALFromIA,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchIAL,                    // 2
+      this.fetchBALFromIA,              // 3
+      () => {                           // 4
         this.add1toIAL()
         this.fetchBAHFromIA()
       },
-      () => {
+      () => {                           // 5
         operation()
         this.writeDataToBA()
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   // read/write $FF
   private zpageReadWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,        // 1
-      this.fetchDataFromAD, // 2
-      this.writeDataToAD,   // 3
-      () => {               // 4
-        operation()
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchDataFromAD,             // 3
+      () => {                           // 4
         this.writeDataToAD()
+        operation()
       },
-      this.fetchNextOpcode  // 5
+      () => {                           // 5
+        this.writeDataToAD()
+        this.prefetchNextOpcode()
+      },
     ]
   }
 
   // read/write $FF,X
   private zpageXReadWrite = (operation: Function) => {
     return [
-        this.fetchNextOpcode,
-        this.fetchBAL,
-        this.fetchDataFromBA,
-        () => {
-          this.addXtoBAL()
-          this.fetchDataFromBA()
-        },
-        this.writeDataToBA,
-        () => {
-          operation()
-          this.writeDataToBA()
-        },
-        this.fetchNextOpcode
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
+        this.fetchDataFromBA()
+        this.addXtoBAL()
+      },
+      this.fetchDataFromBA,             // 4
+      () => {                           // 5
+        this.writeDataToBA()
+        operation()
+      },
+      () => {                           // 6
+        this.writeDataToBA()
+        this.prefetchNextOpcode()
+      },
     ]
   }
 
   // read/write $FFFF
   private absReadWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,        // 1
-      this.fetchADH,        // 2
-      this.fetchDataFromAD, // 3
-      this.writeDataToAD,   // 4
-      () => {               // 5
-        operation()
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchADH,                    // 3
+      this.fetchDataFromAD,             // 4
+      () => {                           // 5
         this.writeDataToAD()
+        operation()
       },
-      this.fetchNextOpcode  // 6
+      () => {                           // 6
+        this.writeDataToAD()
+        this.prefetchNextOpcode()
+      },
     ]
   }
 
   // read/write $FFFF,X
   private absXReadWrite = (operation: Function) => {
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,
-      this.fetchBAH,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
+        this.fetchBAH()
         this.addXtoBAL()
+      },
+      () => {                           // 4
         this.fetchDataFromBA()
         this.addBACarryToBAH()
       },
-      this.fetchDataFromBA,
-      this.writeDataToBA,
-      () => {
-        operation()
+      this.fetchDataFromBA,             // 5
+      () => {                           // 6
         this.writeDataToBA()
+        operation()
       },
-      this.fetchNextOpcode
+      () => {                           // 7
+        this.writeDataToBA()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
@@ -962,26 +966,32 @@ export class Cpu65xx implements ICpu {
 
   private NOP1() {    // 65C02 (1 byte, 1 cycle)
     return [
-      this.fetchNextOpcode,
-      this.fetchNextOpcode, // 1
+      () => {                           // 1
+        this.fetchOpcode()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private NOP2() {    // 65C02 (2 bytes, 2 cycles)
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,        // 1
-      this.fetchNextOpcode, // 2
+      this.fetchOpcode,                 // 1
+      () => {                           // 2
+        this.fetchADL()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private NOP3() {    // 65C02 (3 bytes, 4 cycles)
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,        // 1
-      this.fetchADL,        // 2
-      this.fetchDataFromAD, // 3
-      this.fetchNextOpcode, // 4
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchADL,                    // 3
+      () => {                           // 4
+        this.fetchDataFromAD()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
@@ -1294,141 +1304,148 @@ export class Cpu65xx implements ICpu {
 
   private PHA() {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      () => {                           // 3
         this.pushToStack(this.A)
         const error = this.vstack.PHA()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private PHX() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      () => {                           // 3
         this.pushToStack(this.X)
         const error = this.vstack.PHA()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private PHY() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      () => {                           // 3
         this.pushToStack(this.Y)
         const error = this.vstack.PHA()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private PHP() {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      () => {                           // 3
         // E and B bits always pushed as set
         this.pushToStack(this.getStatusBits() | 0x30)
         const error = this.vstack.PHP()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
+  // NOTE: peekFromStack call is different than the
+  //  "increment S" step indicated in 6502_cpu.txt
+
   private PLA() {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      this.peekFromStack,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
         this.A = this.popFromStack()
         this.setZN(this.A)
         const error = this.vstack.PLA()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private PLX() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      this.peekFromStack,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
         this.X = this.popFromStack()
         this.setZN(this.X)
         const error = this.vstack.PLA()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private PLY() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      this.peekFromStack,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
         this.Y = this.popFromStack()
         this.setZN(this.Y)
         const error = this.vstack.PLA()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private PLP() {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      this.peekFromStack,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
         this.setStatusBits(this.popFromStack())
         const error = this.vstack.PLP()
         if (error && this.debugHook) {
           this.debugHook(error)
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private JSR() {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,
-      this.peekFromStack,
-      () => { this.pushToStack((this.PC >>> 8) & 0xff) },
-      () => { this.pushToStack(this.PC & 0xff) },
-      this.fetchADH,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
+        this.pushToStack((this.PC >>> 8) & 0xff)
+      },
+      () => {                           // 5
+        this.pushToStack(this.PC & 0xff)
+      },
+      () => {                           // 6
+        this.fetchADH()
         const error = this.vstack.JSR(this.AD, this.curCycleCount)
         if (error && this.debugHook) {
           this.debugHook(error)
@@ -1437,7 +1454,7 @@ export class Cpu65xx implements ICpu {
         if (this.callHook) {
           this.callHook()
         }
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -1460,110 +1477,122 @@ export class Cpu65xx implements ICpu {
 
   private WAI() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      () => {},
-      () => {},
-      this.fetchNextOpcode
+      this.fetchOpcode,                 // 1
+      () => {},                         // 2
+      this.prefetchNextOpcode           // 3
     ]
   }
 
   private STP() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      () => {},
-      () => {},
-      this.fetchNextOpcode
+      this.fetchOpcode,                 // 1
+      () => {},                         // 2
+      this.prefetchNextOpcode           // 3
     ]
   }
 
   private BRK() {
     return [
-      this.fetchNextOpcode,
-      this.fetchDataFromImm, // For debugging purposes, use operand as an arg for BRK!
-      () => {
+      this.fetchOpcode,                                     // 1
+      this.fetchDataFromImm,                                // 2
+      () => {                                               // 3
         if (this.debugHook) {
           this.debugHook()
         }
         this.pushToStack((this.PC >>> 8) & 0xff)
       },
-      () => { this.pushToStack(this.PC & 0xff) },
-      () => {
+      () => { this.pushToStack(this.PC & 0xff) },           // 4
+      () => {                                               // 5
         // set E and B bits when pushing
         this.pushToStack(this.getStatusBits() | 0x30)
       },
-      () => { this.AD = this.read(IRQ_VECTOR) },
-      () => { this.AD |= this.read(IRQ_VECTOR + 1) << 8 },
-      () => {
+      () => { this.AD = this.read(IRQ_VECTOR) },            // 6
+      () => {                                               // 7
+        this.AD |= this.read(IRQ_VECTOR + 1) << 8
         this.vstack.BRK(this.AD)
         this.PC = this.AD
         this.I = 1
         this.D = 0      // TODO: 65C02-only
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
 
   private IRQ() {
     return [
-      this.fetchNextOpcode,
-      this.fetchDataFromImm, // For debugging purposes, use operand as an arg for BRK!
-      () => { this.pushToStack((this.PC >>> 8) & 0xff) },
-      () => { this.pushToStack(this.PC & 0xff) },
-      () => { this.pushToStack(this.getStatusBits()) },
-      () => { this.AD = this.read(IRQ_VECTOR) },
-      () => { this.AD |= this.read(IRQ_VECTOR + 1) << 8 },
-      () => {
+      () => {},                                             // 1
+      () => {},                                             // 2
+      () => { this.pushToStack((this.PC >>> 8) & 0xff) },   // 3
+      () => { this.pushToStack(this.PC & 0xff) },           // 4
+      () => { this.pushToStack(this.getStatusBits()) },     // 5
+      () => { this.AD = this.read(IRQ_VECTOR) },            // 6
+      () => {                                               // 7
+        this.AD |= this.read(IRQ_VECTOR + 1) << 8
         this.vstack.IRQ(this.AD)
         this.PC = this.AD
-        this.fetchNextOpcode()
+        if (this.callHook) {
+          this.callHook()
+        }
+        this.prefetchNextOpcode()
       }
     ]
   }
 
   private NMI() {
     return [
-      this.fetchNextOpcode,
-      this.fetchDataFromImm,
-      () => { this.pushToStack((this.PC >>> 8) & 0xff) },
-      () => { this.pushToStack(this.PC & 0xff) },
-      () => { this.pushToStack(this.getStatusBits()) },
-      () => { this.AD = this.read(NMI_VECTOR) },
-      () => { this.AD |= this.read(NMI_VECTOR + 1) << 8 },
-      () => {
+      () => {},                                             // 1
+      () => {},                                             // 2
+      () => { this.pushToStack((this.PC >>> 8) & 0xff) },   // 3
+      () => { this.pushToStack(this.PC & 0xff) },           // 4
+      () => { this.pushToStack(this.getStatusBits()) },     // 5
+      () => { this.AD = this.read(NMI_VECTOR) },            // 6
+      () => {                                               // 7
+        this.AD |= this.read(NMI_VECTOR + 1) << 8
         this.vstack.NMI(this.AD, this.curCycleCount)
         this.PC = this.AD
-        this.fetchNextOpcode()
+        if (this.callHook) {
+          this.callHook()
+        }
+        this.prefetchNextOpcode()
       }
     ]
   }
 
   private RTI() {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      this.peekFromStack,
-      () => { this.setStatusBits(this.popFromStack()) },
-      () => { this.AD = this.popFromStack() },
-      () => { this.AD |= this.popFromStack() << 8 },
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
+        this.setStatusBits(this.popFromStack())
+      },
+      () => {                           // 5
+        this.AD = this.popFromStack()
+      },
+      () => {                           // 6
+        this.AD |= this.popFromStack() << 8
         this.vstack.RTI(this.AD)
         this.PC = this.AD
-        this.fetchNextOpcode()
         if (this.returnHook) {
           this.returnHook()
         }
+        this.prefetchNextOpcode()
       }
     ]
   }
 
   private RTS() {
     return [
-      this.fetchNextOpcode,
-      this.fetchAndDiscard,
-      this.peekFromStack,
-      () => { this.AD = this.popFromStack() },
-      () => { this.AD |= this.popFromStack() << 8 },
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchAndDiscard,             // 2
+      this.peekFromStack,               // 3
+      () => {                           // 4
+        this.AD = this.popFromStack()
+      },
+      () => {                           // 5
+        this.AD |= this.popFromStack() << 8
+      },
+      () => {                           // 6
         const error = this.vstack.RTS(this.AD)
         if (error && this.debugHook) {
           this.debugHook(error)
@@ -1573,21 +1602,21 @@ export class Cpu65xx implements ICpu {
         if (this.returnHook) {
           this.returnHook()
         }
-      },
-      this.fetchNextOpcode
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   // JMP $FFFF
   private JMP_ABS() {
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,
-      this.fetchADH,
-      () => {
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      () => {                           // 3
+        this.fetchADH()
         this.vstack.JMP(this.AD)
         this.PC = this.AD
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -1596,48 +1625,41 @@ export class Cpu65xx implements ICpu {
   // 5 cycles with 6502 overflow bug
   private JMP_IND() {
     return [
-      this.fetchNextOpcode,
-      this.fetchIAL,        // 1
-      this.fetchIAH,        // 2
-      this.fetchBALFromIA,  // 3
-      () => {               // 4
+      this.fetchOpcode,                 // 1
+      this.fetchIAL,                    // 2
+      this.fetchIAH,                    // 3
+      this.fetchBALFromIA,              // 4
+      () => {                           // 5
         this.add1toIAL()
         this.fetchBAHFromIA()
-      },
-      () => {               // 5
         this.vstack.JMP(this.BA)
         this.PC = this.BA
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
 
   // JMP ($FFFF)
   // 6 cycles with overflow bug fixed
+  // NOTE: 65816 is back down to 5 cycles with bug fixed
   private JMP_IND_FIXED() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchIAL,          // 1
-      this.fetchIAH,          // 2
-      this.fetchBALFromIA,    // 3
-      () => {                 // 4
+      this.fetchOpcode,                 // 1
+      this.fetchIAL,                    // 2
+      this.fetchIAH,                    // 3
+      this.fetchBALFromIA,              // 4
+      () => {                           // 5
         this.add1toIAL()
         this.fetchBAHFromIA()
       },
-      () => {                 // 5
+      () => {                           // 6
         if (this.IACarry != 0) {
           this.addIACarrytoIAH()
           this.fetchBAHFromIA()
-        } else {
-          this.vstack.JMP(this.BA)
-          this.PC = this.BA
-          this.fetchNextOpcode()
         }
-      },
-      () => {                 // 6
         this.vstack.JMP(this.BA)
         this.PC = this.BA
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -1645,22 +1667,22 @@ export class Cpu65xx implements ICpu {
   // JMP ($FFFF,X)
   private JMP_AXI() {   // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchBAL,        // 1
-      () => {               // 2
+      this.fetchOpcode,                 // 1
+      this.fetchBAL,                    // 2
+      () => {                           // 3
         this.fetchBAH()
         this.addXtoBAL()
       },
-      () => {               // 3
+      () => {                           // 4
         this.addBACarryToBAH()
         this.PC = this.BA
+        this.fetchBAL()
       },
-      this.fetchBAL,        // 4
-      this.fetchBAH,        // 5
-      () => {               // 6
+      this.fetchBAH,                    // 5
+      () => {                           // 6
         this.vstack.JMP(this.BA)
         this.PC = this.BA
-        this.fetchNextOpcode()
+        this.prefetchNextOpcode()
       }
     ]
   }
@@ -1703,25 +1725,26 @@ export class Cpu65xx implements ICpu {
 
   private Bxx(branchTaken: () => boolean) {
     return [
-      this.fetchNextOpcode,
-      this.fetchBranchOffset,
-      () => {
-        if (branchTaken()) {
-          this.fetchAndDiscard()
-          this.addBranchOffsetToPCL()
-        } else {
-          this.fetchNextOpcode()
+      this.fetchOpcode,                 // 1
+      () => {                           // 2
+        this.fetchBranchOffset()
+        if (!branchTaken()) {
+          this.prefetchNextOpcode()
         }
       },
-      () => {
+      () => {                           // 3 (taken)
+        this.fetchAndDiscard()
+        this.addBranchOffsetToPCL()
         if (this.branchOffsetCrossAdjust) {
-          this.fetchAndDiscard()
           this.adjustPCHForBranchOffsetCross()
         } else {
-          this.fetchNextOpcode()
+          this.prefetchNextOpcode()
         }
       },
-      this.fetchNextOpcode
+      () => {                           // 4 (page-cross)
+        this.fetchAndDiscard()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
@@ -1735,30 +1758,23 @@ export class Cpu65xx implements ICpu {
 
   private BBRS(operation: Function) { // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,          // 1
-      this.fetchDataFromAD,   // 2
-      this.fetchBranchOffset, // 3
-      () => {                 // 4
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchDataFromAD,             // 3
+      () => {                           // 4
+        this.fetchBranchOffset()
         operation()
-      },
-      () => {                 // 5
-        if (this.data != 0) {
-          // branch taken
-          this.addBranchOffsetToPCL()
-        } else {
-          // branch not taken
-          this.fetchNextOpcode()
+        if (this.data == 0) {
+          this.prefetchNextOpcode()
         }
       },
-      () => {                 // 6 (branch taken)
+      () => {                           // 5 (taken)
+        this.addBranchOffsetToPCL()
         if (this.branchOffsetCrossAdjust) {
           this.adjustPCHForBranchOffsetCross()
-        } else {
-          this.fetchNextOpcode()
         }
-      },
-      this.fetchNextOpcode    // 7 (page crossed)
+          this.prefetchNextOpcode()
+      }
     ]
   }
 
@@ -1772,25 +1788,28 @@ export class Cpu65xx implements ICpu {
 
   private RSMB(operation: Function) { // 65C02
     return [
-      this.fetchNextOpcode,
-      this.fetchADL,        // 1
-      this.fetchDataFromAD, // 2
-      () => {               // 3
+      this.fetchOpcode,                 // 1
+      this.fetchADL,                    // 2
+      this.fetchDataFromAD,             // 3
+      () => {                           // 4
+        this.writeDataToAD()
         operation()
       },
-      this.writeDataToAD,   // 4
-      this.fetchNextOpcode  // 5
+      () => {                           // 5
+        this.writeDataToAD()
+        this.prefetchNextOpcode()
+      }
     ]
   }
 
   private ILL() {
     return [
-      this.fetchNextOpcode,
+      this.fetchOpcode,                 // 1
       // TODO: break into debugger? NOP?
-      () => {
+      () => {                           // 2
         console.log("Illegal")
+        this.prefetchNextOpcode()
       },
-      this.fetchNextOpcode
     ]
   }
 

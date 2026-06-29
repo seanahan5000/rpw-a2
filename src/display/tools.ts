@@ -34,7 +34,9 @@ export enum Tool {
   FillRect,
   FrameRect,
   FillOval,
-  FrameOval
+  FrameOval,
+
+  Info        // special backdoor tool to get hardware specific info
 }
 
 export const ToolCursors: Cursor[] = [

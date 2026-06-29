@@ -79,10 +79,11 @@ export type BreakpointEntry = {
   address: number
 }
 
-// export interface IInput {
-//   setJoystickValues(joystick: Joystick): void
-//   setKeyCode(appleCode: number): void
-// }
+export type DataBreakpointEntry = {
+  address: number
+  length: number
+  access: number
+}
 
 // *** replicate in other types.ts ***
 export interface IInputEventHandler {
@@ -97,19 +98,7 @@ export interface IInputEventHandler {
   onpointerleave(e: PointerEvent, hasFocus: boolean): void
 }
 
-// *** visible/active page is very Apple-specific -- generalize/remove? ***
-export interface IDisplay {
-  // *** cleanup ***
-  setView(view: any): void
-  // *** rename to lookupFormat
-  getFormat(formatName: string): any  // DisplayFormat
-
-  getDisplayMode(): string
-  getVisibleDisplayPage(): number
-  getActiveDisplayPage(): number
-  getDisplayMemory(frame: PixelData, page: number): void
-  setDisplayMemory(frame: PixelData, page: number): void
-}
+type Bitmap = any
 
 export interface IMemory {
 
@@ -224,11 +213,17 @@ export interface IMachine {
   flattenState(state: any): Promise<void>
   setState(state: any): void
 
+  setDiskCartImage(
+    fullPath: string,
+    dataBytes: Uint8Array,
+    driveIndex?: number,
+    onWrite?: (newDataBytes: Uint8Array) => void): void
+
+  setDataBreakpoints(breakpoints: DataBreakpointEntry[]): void
+
   get clock(): IClock
   get memory(): IMemory
   get cpu(): ICpu
-  get display(): IDisplay
-  // get input(): IInput
 }
 
 //------------------------------------------------------------------------------

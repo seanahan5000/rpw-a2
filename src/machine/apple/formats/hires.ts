@@ -1,6 +1,6 @@
 
 import { Point, Size, Rect, PixelData } from "../../../shared/types"
-import { DisplayFormat, Bitmap } from "../../../display/format"
+import { ColorPattern, DisplayFormat, Bitmap } from "../../../display/format"
 import { deinterleave40, deinterleave80 } from "./text"
 
 import { HiresColors, DoubleHiresColors, HiresInterleave } from "./tables"
@@ -8,6 +8,8 @@ import { HGR_BLACK_RGB, HGR_WHITE_RGB } from "./tables"
 import { HGR_PURPLE_RGB, HGR_GREEN_RGB, HGR_BLUE_RGB, HGR_ORANGE_RGB } from "./tables"
 import { LIGHT_BLUE_RGB, DARK_BLUE_RGB } from "./tables"
 import { YELLOW_RGB, BROWN_RGB, AQUA_RGB, PINK_RGB } from "./tables"
+
+import { AppleDisplayFormat } from "./base"
 
 const LIGHT_BROWN_RGB = YELLOW_RGB
 const DARK_BROWN_RGB = BROWN_RGB
@@ -35,17 +37,17 @@ enum HiresColorIndex {
 
 //------------------------------------------------------------------------------
 
-export class HiresFormat extends DisplayFormat {
+export class HiresFormat extends AppleDisplayFormat {
 
-  private readonly colorPatterns = [
-    [[ 0x00, 0x00 ]], // black 0
-    [[ 0x7F, 0x00 ]], // purple
-    [[ 0x00, 0x7F ]], // green
-    [[ 0x7F, 0x7F ]], // white 0
-    [[ 0x80, 0x80 ]], // black 1
-    [[ 0xFF, 0x80 ]], // blue
-    [[ 0x80, 0xFF ]], // orange
-    [[ 0xFF, 0xFF ]], // white 1
+  private readonly colorPatterns: ColorPattern[] = [
+    { values: [[ 0x00, 0x00 ]], name: "black0" },
+    { values: [[ 0x7F, 0x00 ]], name: "purple" },
+    { values: [[ 0x00, 0x7F ]], name: "green"  },
+    { values: [[ 0x7F, 0x7F ]], name: "white0" },
+    { values: [[ 0x80, 0x80 ]], name: "black1" },
+    { values: [[ 0xFF, 0x80 ]], name: "blue"   },
+    { values: [[ 0x80, 0xFF ]], name: "orange" },
+    { values: [[ 0xFF, 0xFF ]], name: "white1" },
   ]
 
   public get name(): string {
@@ -64,8 +66,12 @@ export class HiresFormat extends DisplayFormat {
     return { x: 2, y: 2 }
   }
 
-  public get alignment(): Point {
-    return { x: 7, y: 0 }
+  public get alignmentX(): number {
+    return 7
+  }
+
+  public get alignmentY(): number | number[] {
+    return 0
   }
 
   public calcPixelWidth(byteWidth: number) {
@@ -97,7 +103,7 @@ export class HiresFormat extends DisplayFormat {
     return { main: new Uint32Array(size), alt: new Uint32Array(size) }
   }
 
-  public get colorCount(): number {
+  public get patternCount(): number {
     return this.colorPatterns.length
   }
 
@@ -105,7 +111,7 @@ export class HiresFormat extends DisplayFormat {
     return HiresColors[index]
   }
 
-  public getColorPattern(index: number): number[][] {
+  public getColorPattern(index: number): ColorPattern {
     return this.colorPatterns[index]
   }
 
@@ -604,7 +610,7 @@ class HiresBitmap extends Bitmap {
 // General description of double hires in Apple II Tech Note #3
 //  https://ia903007.us.archive.org/28/items/IIe_2523003_Dbl_Hi-Res_Graphics/IIe_2523003_Dbl_Hi-Res_Graphics.pdf
 
-export class DoubleHiresFormat extends DisplayFormat {
+export class DoubleHiresFormat extends AppleDisplayFormat {
 
   public get name(): string {
     return "dhires"
@@ -622,8 +628,12 @@ export class DoubleHiresFormat extends DisplayFormat {
     return { x: 4, y: 2 }
   }
 
-  public get alignment(): Point {
-    return { x: 0, y: 0 }
+  public get alignmentX(): number {
+    return 0
+  }
+
+  public get alignmentY(): number | number[] {
+    return 0
   }
 
   public calcPixelWidth(byteWidth: number) {
@@ -660,7 +670,7 @@ export class DoubleHiresFormat extends DisplayFormat {
     return { main: new Uint32Array(size), alt: new Uint32Array(size) }
   }
 
-  public get colorCount(): number {
+  public get patternCount(): number {
     return DoubleHiresColors.length
   }
 
@@ -668,8 +678,8 @@ export class DoubleHiresFormat extends DisplayFormat {
     return DoubleHiresColors[index]
   }
 
-  public getColorPattern(index: number): number[][] {
-    return [[index]]
+  public getColorPattern(index: number): ColorPattern {
+    return { values: [[index]] }
   }
 
   // input data is aux memory followed by main memory, each 40 bytes by 192 lines, each with line swizzle

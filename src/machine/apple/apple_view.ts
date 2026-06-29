@@ -1,12 +1,13 @@
 
-import { AppleMachine, Apple, FileDiskImage } from "./apple"
-import { DisplayView, DisplaySource } from "../../display/display_view"
-import { MachineView, IconView, IconImages } from "../machine_view"
-import * as Views from "../machine_view"
-
 import { Point, Joystick } from "../../shared/types"
 import { IInputEventHandler } from "../../shared/types"
 import { EmulatorParams, Emulator, Machine } from "../machine"
+
+import { AppleMachine, Apple, FileDiskImage, DisplaySource } from "./apple"
+import { DisplayView } from "../../display/display_view"
+import { MachineView, IconView, IconImages } from "../machine_view"
+import * as Views from "../machine_view"
+import { Text40Format } from "./formats/text"
 
 //------------------------------------------------------------------------------
 
@@ -63,11 +64,14 @@ const screenHelpTexts = [
 
 class ScreenIconView extends IconView {
 
+  private appleMachine: AppleMachine
   private iconPage: HTMLDivElement
   public screensDiv: HTMLDivElement
 
   constructor(machineView: MachineView) {
     super(machineView)
+
+    this.appleMachine = <AppleMachine>this.machine
 
     this.screensDiv = <HTMLDivElement>document.createElement("div")
     this.screensDiv.classList.add("screens-div")
@@ -84,7 +88,7 @@ class ScreenIconView extends IconView {
 
       iconDiv.addEventListener("mousedown", (e: MouseEvent) => {
         e.preventDefault()
-        this.displayView.setDisplaySource(i)
+        this.appleMachine.displayClock.setDisplaySource(i)
         this.screensDiv!.style.display = "none"
         this.displayView.focus()
       })
@@ -105,8 +109,6 @@ class ScreenIconView extends IconView {
       this.machineView.setHoverElement(iconDiv, iconHelp)
     }
 
-    this.machineView.topDiv.appendChild(this.screensDiv)
-
     const iconPageWrapper = <HTMLDivElement>document.createElement("div")
     iconPageWrapper.classList.add("apple-icon-page-wrapper")
     this.iconDiv.appendChild(iconPageWrapper)
@@ -118,15 +120,16 @@ class ScreenIconView extends IconView {
     this.iconDiv.classList.add("apple-screen")
     this.iconDiv.addEventListener("mousedown", (e: MouseEvent) => {
       e.preventDefault()
-      this.screensDiv.style.display = "block"
+      this.screensDiv.style.display = "flex"  // ***
       this.displayView.focus()
     })
 
-    this.displayView.setSourceListener((source: DisplaySource, isPaged: boolean, pageIndex: number) => {
+    this.machineView.topDiv.appendChild(this.screensDiv)
+    // *** this.iconDiv.appendChild(this.screensDiv)
+
+    this.appleMachine.displayClock.setSourceListener((source: DisplaySource, isPaged: boolean, pageIndex: number) => {
       this.updateScreenInfo(source, isPaged, pageIndex)
     })
-
-    this.displayView.setDisplaySource(DisplaySource.Visible)
   }
 
   private updateScreenInfo(source: DisplaySource, isPaged: boolean, pageIndex: number) {
@@ -354,8 +357,8 @@ export class AppleEmulator extends Emulator {
 
     super(parent, params)
 
-    const displayView = new DisplayView(this.topDiv, this.machine.display, this.appleInput)
-    this.machine.display.setView(displayView)
+    const displayView = new DisplayView(this.topDiv, new Text40Format(), this.appleInput)
+    this.machine.setView(displayView)
 
     this.appleView = new AppleView(this.topDiv, this.appleMachine, displayView, clickHook)
     this.appleView.setVisible(true)

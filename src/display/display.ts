@@ -43,12 +43,12 @@
 //    ? show background layer/image for tracing purposes
 
 import { IHostHooks } from "../shared/types"
-import { Point, Size, Rect, pointInRect, rectIsEmpty, PixelData } from "../shared/types"
-import { IDisplay } from "../shared/types"
+import { Point, Size, Rect, pointInRect, rectIsEmpty } from "../shared/types"
 import { DisplayFormat, Bitmap } from "./format"
 import { Tool, Cursor, ToolCursors } from "./tools"
 import { Polygon, FloodFill, drawMaskEdges, drawEllipse } from "./graphics"
 import { textFromPixels, imageFromText } from "./copy_paste"
+import { ASSERT } from "../machine/clock"
 
 // TODO: generalize
 import { Font } from "../machine/apple/formats/text"
@@ -59,9 +59,11 @@ import { Font } from "../machine/apple/formats/text"
 
 export class ScreenDisplay {
 
+  protected frame!: Bitmap
+  protected altFrame?: Bitmap
   protected canvas: HTMLCanvasElement
 
-  // abstraction of all display format-specific information
+  // abstraction of all display format-specific information (copied from frame)
   public format: DisplayFormat
 
   // scaling from frame pixels to visible display
@@ -72,7 +74,7 @@ export class ScreenDisplay {
   // TODO: use this.format directly?
   protected displaySize: Size
 
-  protected frame: Bitmap
+  // copy of pixels last put on screen, for difference detection
   protected visibleFrame?: Bitmap
 
   protected colorBufferTV: Uint32Array
@@ -88,8 +90,9 @@ export class ScreenDisplay {
   public onToolChanged?: (oldTool: Tool, newTool: Tool, modifiers: number) => void
   public onToolRectChanged?: () => void
   public onColorChanged?: (oldColor: number, newColor: number, isBack: boolean) => void
+  public onFrameChanged?: (frame: Bitmap, altFrame?: Bitmap) => void
 
-  constructor(format: DisplayFormat, canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, format: DisplayFormat) {
 
     this.format = format
     this.canvas = canvas
@@ -105,7 +108,6 @@ export class ScreenDisplay {
     this.canvas.width = this.format.displaySize.width
     this.canvas.height = this.format.displaySize.height
 
-    this.frame = this.format.createFrameBitmap()
     const buffers = this.format.createColorBuffers()
     this.colorBufferTV = buffers.main
     this.colorBufferRGB = buffers.alt
@@ -117,9 +119,14 @@ export class ScreenDisplay {
     }
   }
 
-  setFrameMemory(pixelData: PixelData) {
-    this.frame.decode(pixelData)
+  public setFrame(frame: Bitmap, altFrame?: Bitmap): boolean {
+    if (frame.format.name != this.format.name) {
+      return false
+    }
+    this.frame = frame
+    this.altFrame = altFrame
     this.updateFrame()
+    return true
   }
 
   protected updateFrame() {
@@ -235,9 +242,6 @@ export class ScreenDisplay {
 
 class ZoomDisplay extends ScreenDisplay {
 
-  private machineDisplay: IDisplay
-  private pageIndex: number
-
   private zoomData?: ImageData
   protected zoomArray?: Uint32Array
 
@@ -255,12 +259,9 @@ class ZoomDisplay extends ScreenDisplay {
   private scrollSize: Size            // pageSize * this.totalScale (displaySize)
   protected windowRect: Rect          // canvas size within scrollSize
 
-  constructor(format: DisplayFormat, canvas: HTMLCanvasElement, machineDisplay: IDisplay) {
+  constructor(canvas: HTMLCanvasElement, format: DisplayFormat) {
 
-    super(format, canvas)
-
-    this.machineDisplay = machineDisplay
-    this.pageIndex = 0
+    super(canvas, format)
 
     this.totalScale = {
       x: this.pixelScale.x * this.zoomScale,
@@ -298,10 +299,6 @@ class ZoomDisplay extends ScreenDisplay {
 
     this.updateWindowRect()
     this.updateOverlayRect()
-  }
-
-  setPageIndex(pageIndex: number) {
-    this.pageIndex = pageIndex
   }
 
   protected displayFromCanvasPt(canvasPt: Point): Point {
@@ -581,16 +578,10 @@ class ZoomDisplay extends ScreenDisplay {
   //  Updates buffers/canvas
   //----------------------------------------------------------------------------
 
-  updateFromMemory() {
-    const pixelData = this.format.createFramePixelData()
-    this.machineDisplay.getDisplayMemory(pixelData, this.pageIndex)
-    this.frame.decode(pixelData)
-    this.updateFrame()
-  }
-
   updateToMemory() {
-    const pixelData = this.frame.encode()
-    this.machineDisplay.setDisplayMemory(pixelData, this.pageIndex)
+    if (this.onFrameChanged) {
+      this.onFrameChanged(this.frame, this.altFrame)
+    }
     this.updateFrame()
   }
 
@@ -681,7 +672,7 @@ class ZoomDisplay extends ScreenDisplay {
     for (let x = 0; x < this.frameSize.width; x += 1) {
       let gridColor = gridX == 0 ? 0xff007f00 : 0xff000000
       if ((gridX -= 1) < 0) {
-        gridX = this.format.alignment.x - 1
+        gridX = this.format.alignmentX - 1
       }
       let dstOffset = 0
       for (let y = 0; y < this.displaySize.height * this.zoomScale; y += 1) {
@@ -693,10 +684,37 @@ class ZoomDisplay extends ScreenDisplay {
         dstOffset += dstPixelStride
       }
     }
+
+    if (this.format.alignmentY != 0) {
+      let alignY: number[]
+      if (Array.isArray(this.format.alignmentY)) {
+        alignY = this.format.alignmentY
+      } else {
+        alignY = []
+        for (let y = this.format.alignmentY; y < this.frameSize.height; y += this.format.alignmentY) {
+          alignY.push(y)
+        }
+      }
+      for (let i = 0; i < alignY.length; i += 1) {
+        let y = alignY[i]
+        if (y == 0) {
+          continue
+        }
+        let lineColor = 0xff007f00  // dark green
+        if (y & 0x1000) {
+          y &= ~0x1000
+          lineColor = 0xff0000ff  // red
+        }
+        const dstOffset = (y * this.totalScale.y - 1) * dstPixelStride
+        for (let x = 0; x < this.displaySize.width * this.zoomScale; x += 1) {
+          this.zoomArray[dstOffset + x] = lineColor
+        }
+      }
+    }
   }
 
   protected updateCanvas() {
-    let ctx = this.canvas.getContext('2d')
+    const ctx = this.canvas.getContext('2d')
     if (!ctx) {
       return
     }
@@ -860,8 +878,8 @@ export class PaintDisplay extends ZoomDisplay {
 
   private useTransparent = false
 
-  constructor(format: DisplayFormat, canvas: HTMLCanvasElement, machineDisplay: IDisplay) {
-    super(format, canvas, machineDisplay)
+  constructor(canvas: HTMLCanvasElement, format: DisplayFormat) {
+    super(canvas, format)
   }
 
   public resizeDisplay(newWidth: number, newHeight: number) {
@@ -1005,7 +1023,7 @@ export class PaintDisplay extends ZoomDisplay {
   }
 
   setForeColor(colorIndex: number) {
-    if (colorIndex < this.format.colorCount) {
+    if (colorIndex < this.format.patternCount) {
       const prevColor = this.foreColor
       this.foreColor = colorIndex
       if (this.onColorChanged) {
@@ -1022,7 +1040,7 @@ export class PaintDisplay extends ZoomDisplay {
   }
 
   setBackColor(colorIndex: number) {
-    if (colorIndex < this.format.colorCount) {
+    if (colorIndex < this.format.patternCount) {
       const prevColor = this.backColor
       this.backColor = colorIndex
       if (this.onColorChanged) {
@@ -1368,8 +1386,8 @@ export class PaintDisplay extends ZoomDisplay {
       const delta = (direction & 2) - 1
       color += delta
       if (color < 0) {
-        color += this.format.colorCount
-      } else if (color >= this.format.colorCount) {
+        color += this.format.patternCount
+      } else if (color >= this.format.patternCount) {
         color = 0
       }
       if (modifiers & ModifierKeys.OPTION) {
@@ -1518,7 +1536,7 @@ export class PaintDisplay extends ZoomDisplay {
       case Tool.FrameRect:
         // TODO: this is HIRES specific
         if (this.toolRect.width >= 4 && this.toolRect.height >= 2) {
-          const patternWidth = this.format.getColorPattern(this.foreColor)[0].length
+          const patternWidth = this.format.getColorPattern(this.foreColor).values[0].length
           let r = { x: this.toolRect.x, y: this.toolRect.y, width: this.toolRect.width, height: 1 }
           this.frame.fillRect(r, this.foreColor)
           r.y = this.toolRect.y + this.toolRect.height - 1
@@ -1837,7 +1855,7 @@ export class PaintDisplay extends ZoomDisplay {
       this.toolRect.y = this.frameCurrPt.y - this.frameStartPt.y
       if (this.constrainMode == ConstrainMode.Horizontal) {
         // TODO: implement "detents" at byte boundaries
-        const alignX = this.format.alignment.x
+        const alignX = this.format.alignmentX
         if (alignX) {
           this.toolRect.x -= (this.toolRect.x % alignX) - (this.selectBits.x % alignX)
         }
@@ -2117,7 +2135,7 @@ export class PaintDisplay extends ZoomDisplay {
         if (horizontal) {
           this.selectBits!.flipHorizontal()
           this.selectMask?.flipHorizontal()
-          const alignX = this.format.alignment.x
+          const alignX = this.format.alignmentX
           if (alignX) {
             this.toolRect.x -= (this.toolRect.x % alignX) - (this.selectBits!.x % alignX)
           }
@@ -2344,8 +2362,8 @@ export class PaintDisplay extends ZoomDisplay {
       y = frameRect.y
     }
 
-    if (this.format.alignment.x) {
-      const alignX = this.format.alignment.x
+    if (this.format.alignmentX) {
+      const alignX = this.format.alignmentX
       x = x - (x % alignX) + (bitmap.x % alignX)
       if (x < frameRect.x) {
         x += alignX
