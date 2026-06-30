@@ -1,5 +1,11 @@
 # RPW A2 Changelog
 
+### [4.0.0] - 2026-06-29
+
+#### Added:
+* Emulation of Atari 7800
+* Emulator: Snapshot every 60th of second, command key to skip by 60
+
 ### [3.0.3] - 2025-09-16
 
 #### Added:
